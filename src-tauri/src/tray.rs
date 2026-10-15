@@ -108,12 +108,18 @@ pub fn show_main<R: Runtime>(app: &AppHandle<R>, page: Option<&str>) {
     }
 }
 
-pub fn setup<R: Runtime>(app: &AppHandle<R>, data_dir: &Path) -> tauri::Result<()> {
+/// `on_pick` runs for 「查找窗口所属程序…」.
+pub fn setup<R: Runtime>(
+    app: &AppHandle<R>,
+    data_dir: &Path,
+    on_pick: impl Fn(&AppHandle<R>) + Send + Sync + 'static,
+) -> tauri::Result<()> {
     let settings = load_settings(data_dir);
     let open = MenuItem::with_id(app, "open", "打开 DiskMate", true, None::<&str>)?;
     let space = MenuItem::with_id(app, "space", space_line(), false, None::<&str>)?;
     let cleanup = MenuItem::with_id(app, "cleanup", "智能清理", true, None::<&str>)?;
     let perf = MenuItem::with_id(app, "perf", "性能", true, None::<&str>)?;
+    let finder = MenuItem::with_id(app, "finder", "查找窗口所属程序…", true, None::<&str>)?;
     let keep_in_tray = CheckMenuItem::with_id(
         app,
         "keep-in-tray",
@@ -131,6 +137,7 @@ pub fn setup<R: Runtime>(app: &AppHandle<R>, data_dir: &Path) -> tauri::Result<(
             &PredefinedMenuItem::separator(app)?,
             &cleanup,
             &perf,
+            &finder,
             &PredefinedMenuItem::separator(app)?,
             &keep_in_tray,
             &quit,
@@ -152,6 +159,7 @@ pub fn setup<R: Runtime>(app: &AppHandle<R>, data_dir: &Path) -> tauri::Result<(
             "open" => show_main(app, None),
             "cleanup" => show_main(app, Some("cleanup")),
             "perf" => show_main(app, Some("perf")),
+            "finder" => on_pick(app),
             "keep-in-tray" => {
                 let state = app.state::<TrayState<R>>();
                 // The check mark has already flipped itself.

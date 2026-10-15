@@ -7,6 +7,7 @@ mod filemeta;
 mod history;
 mod migrate;
 mod perf;
+mod picker;
 mod rules;
 mod scan;
 mod startup;
@@ -40,6 +41,8 @@ struct AppState {
     perf: Mutex<Option<perf::Monitor>>,
     procs: Mutex<Option<perf::ProcMonitor>>,
     hardware: Mutex<Option<perf::HardwareInfo>>,
+    /// The last window picked, for a window opened afterwards (picking from the tray).
+    last_pick: Mutex<Option<picker::WindowPick>>,
 }
 
 /// `%LOCALAPPDATA%\com.cjxhaaa.diskmate`: past scans, the record of moved folders.
@@ -865,6 +868,59 @@ fn close_main_window(app: AppHandle) {
     }
 }
 
+/// Picks a window with the mouse (DiskMate gets out of the way meanwhile) and describes the
+/// program it belongs to. None when the pick was cancelled.
+pub async fn pick_window_flow(app: AppHandle) -> Result<Option<picker::WindowPick>, String> {
+    let minimized = app
+        .get_webview_window(tray::MAIN)
+        .map(|w| w.minimize().is_ok())
+        .unwrap_or(false);
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        if minimized {
+            // Let the minimize animation finish so DiskMate is not what gets highlighted.
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        picker::pick()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let info = match picked {
+        Ok(Some(h)) => tauri::async_runtime::spawn_blocking(move || picker::describe(h))
+            .await
+            .ok(),
+        Ok(None) => None,
+        Err(e) => {
+            tray::show_main(&app, Some("finder"));
+            return Err(e);
+        }
+    };
+    if info.is_some() {
+        *app.state::<AppState>().last_pick.lock().unwrap() = info.clone();
+    }
+    tray::show_main(&app, Some("finder"));
+    Ok(info)
+}
+
+#[tauri::command]
+async fn pick_window(app: AppHandle) -> Result<Option<picker::WindowPick>, String> {
+    pick_window_flow(app).await
+}
+
+#[tauri::command]
+fn last_pick(state: State<AppState>) -> Option<picker::WindowPick> {
+    state.last_pick.lock().unwrap().clone()
+}
+
+#[tauri::command]
+fn focus_window(hwnd: i64) -> Result<(), String> {
+    picker::focus(hwnd)
+}
+
+#[tauri::command]
+fn end_pid(pid: u32) -> Result<(), String> {
+    perf::end_pid(pid)
+}
+
 #[tauri::command]
 fn reveal_path(path: String) -> Result<(), String> {
     sys::reveal(&PathBuf::from(path))
@@ -909,7 +965,12 @@ pub fn run() {
         .setup(|app| {
             let dir = data_dir(app.handle());
             cache::init(dir.clone());
-            tray::setup(app.handle(), &dir)?;
+            tray::setup(app.handle(), &dir, |app| {
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = pick_window_flow(app).await;
+                });
+            })?;
             Ok(())
         })
         .on_window_event(|window, event| match event {
@@ -979,6 +1040,10 @@ pub fn run() {
             take_pending_page,
             set_close_to_tray,
             close_main_window,
+            pick_window,
+            last_pick,
+            focus_window,
+            end_pid,
             reveal_path
         ])
         .build(tauri::generate_context!())

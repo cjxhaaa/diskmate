@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { Activity, AppWindow, FolderSearch, HardDrive, LayoutDashboard, LayoutGrid, Power, Sparkles, TrendingUp, Truck } from "lucide-react";
+import { Activity, AppWindow, Crosshair, FolderSearch, HardDrive, LayoutDashboard, LayoutGrid, Power, Sparkles, TrendingUp, Truck } from "lucide-react";
 import { api } from "./api";
 import { Dialog, Toasts, UsageBar } from "./components/ui";
 import { formatBytes } from "./format";
 import { Apps } from "./pages/Apps";
 import { Cleanup } from "./pages/Cleanup";
 import { Explorer } from "./pages/Explorer";
+import { Finder } from "./pages/Finder";
 import { Changes } from "./pages/Changes";
 import { Files } from "./pages/Files";
 import { Move } from "./pages/Move";
@@ -14,7 +15,7 @@ import { Perf } from "./pages/Perf";
 import { Startup } from "./pages/Startup";
 import { StoreProvider, useStore } from "./store";
 
-type Page = "overview" | "cleanup" | "apps" | "startup" | "files" | "move" | "explorer" | "changes" | "perf";
+type Page = "overview" | "cleanup" | "apps" | "startup" | "files" | "move" | "explorer" | "changes" | "perf" | "finder";
 
 const NAV: { id: Page; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "overview", label: "概览", icon: LayoutDashboard },
@@ -26,6 +27,7 @@ const NAV: { id: Page; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "explorer", label: "空间分析", icon: LayoutGrid },
   { id: "changes", label: "空间变化", icon: TrendingUp },
   { id: "perf", label: "性能", icon: Activity },
+  { id: "finder", label: "窗口定位", icon: Crosshair },
 ];
 
 const PAGES = new Set<string>(NAV.map((n) => n.id));
@@ -126,6 +128,7 @@ function Shell() {
         {page === "changes" && <Changes />}
         {page === "startup" && <Startup />}
         {page === "perf" && <Perf />}
+        {page === "finder" && <Finder />}
       </main>
       <Toasts />
       {askClose && <CloseChoice onDone={() => setAskClose(false)} />}

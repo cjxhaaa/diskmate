@@ -480,6 +480,32 @@ const CRITICAL: &[&str] = &[
     "securityhealthservice",
 ];
 
+/// Ends the one process `pid` (the window picker's 「结束进程」), with the same refusals as
+/// [`end_group`].
+pub fn end_pid(pid: u32) -> Result<(), String> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+    if pid == std::process::id() {
+        return Err("不能结束 DiskMate 自己".into());
+    }
+    let name = crate::util::processes()
+        .into_iter()
+        .find(|(p, _)| *p == pid)
+        .map(|(_, n)| n)
+        .ok_or("这个进程已经退出了")?;
+    let stem = name.strip_suffix(".exe").unwrap_or(&name);
+    if CRITICAL.contains(&stem) {
+        return Err(format!("{name} 是 Windows 运行必需的进程，不能结束"));
+    }
+    unsafe {
+        let h = OpenProcess(PROCESS_TERMINATE, false, pid)
+            .map_err(|_| "没有权限结束它，它可能以管理员身份运行".to_string())?;
+        let r = TerminateProcess(h, 1);
+        let _ = CloseHandle(h);
+        r.map_err(|_| "没有权限结束它，它可能以管理员身份运行".to_string())
+    }
+}
+
 /// Ends every process named `name` (no `.exe`). Returns how many ended.
 pub fn end_group(name: &str) -> Result<u32, String> {
     use windows::Win32::Foundation::CloseHandle;

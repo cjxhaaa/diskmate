@@ -46,6 +46,11 @@ npkill / kondo（开发者构建产物）的做法，针对「开发者的 C 盘
   中文系统上也能用；CPU 用 `% Processor Utility`（和任务管理器一致），磁盘 / 网络 / GPU 引擎同样走 PDH，
   内存走 GlobalMemoryStatusEx + GetPerformanceInfo，显卡名称和 LUID 来自 DXGI，硬件型号（CPU 缓存、内存频率、
   磁盘型号、网卡）由一次 CIM 查询得到并缓存。下方列出按程序合并的进程（CPU / 内存），可以结束任务，Windows 必需的进程会被拒绝。
+- **窗口定位**：点「选择窗口」（或托盘菜单「查找窗口所属程序…」）后 DiskMate 最小化，鼠标下的窗口被框出并显示程序名，
+  单击选定，Esc / 右键取消。选中后显示进程名、PID、图标、发行商、文件位置、命令行、启动时间、专用内存、线程数、父进程、
+  是否以管理员身份运行，可以打开文件位置、切换到该窗口、结束这一个进程。应用商店应用的窗口由 ApplicationFrameHost 托管，
+  会找到应用自己的进程。实现：低级鼠标 / 键盘钩子吞掉选定那一下点击（不会点到目标窗口里），高亮框是几个点击穿透的置顶分层窗口，
+  悬停靠 30 ms 定时器轮询鼠标位置。安全：60 秒没选自动取消；钩子自己检查截止时间，选择循环万一卡住也不再拦截输入。
 
 ## 资源占用
 
@@ -91,6 +96,7 @@ cargo test --release real_analysis -- --ignored --nocapture  # 只读：分析�
 cargo test --release real_startup -- --ignored --nocapture   # 只读：列出本机启动项
 cargo test --release real_perf -- --ignored --nocapture      # 只读：硬件信息、一次性能采样和进程
 cargo test --release real_toggle -- --ignored --nocapture    # 建一个临时 Run 项，关 / 开后删掉
+cargo test --release real_pick -- --ignored --nocapture      # 不动鼠标，模拟点选任务栏并取消一次
 ```
 
 ## 已知限制

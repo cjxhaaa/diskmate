@@ -271,6 +271,28 @@ export interface FileDetails {
   target: string | null;
 }
 
+export interface WindowPick {
+  hwnd: number;
+  title: string;
+  className: string;
+  pid: number;
+  /** `chrome.exe` */
+  name: string;
+  path: string | null;
+  commandLine: string | null;
+  startedAt: number | null;
+  memory: number | null;
+  threads: number;
+  parentPid: number | null;
+  parentName: string | null;
+  elevated: boolean | null;
+  /** A Store app shown through ApplicationFrameHost; `pid` is the app's own process. */
+  hosted: boolean;
+  description: string | null;
+  company: string | null;
+  icon: string | null;
+}
+
 export interface VDisk {
   path: string;
   size: number;
@@ -341,6 +363,10 @@ export const api = {
   fileDetails: (paths: string[]) => call<Record<string, FileDetails>>("file_details", { paths }),
   endProcess: (name: string) => call<number>("end_process", { name }),
   perfStop: () => call<void>("perf_stop"),
+  pickWindow: () => call<WindowPick | null>("pick_window"),
+  lastPick: () => call<WindowPick | null>("last_pick"),
+  focusWindow: (hwnd: number) => call<void>("focus_window", { hwnd }),
+  endPid: (pid: number) => call<void>("end_pid", { pid }),
   takePendingPage: () => call<string | null>("take_pending_page"),
   setCloseToTray: (on: boolean) => call<void>("set_close_to_tray", { on }),
   closeMainWindow: () => call<void>("close_main_window"),

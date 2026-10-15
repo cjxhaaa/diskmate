@@ -2099,3 +2099,85 @@ button {
   box-shadow: 0 0 0 3px var(--accent-soft);
   outline: none;
 }
+
+/* ---------------------------------------------------------------- window finder */
+
+.finder-start {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 18px 20px;
+  margin-bottom: 16px;
+}
+.finder-steps {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+.finder-result {
+  padding: 20px;
+}
+.finder-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.finder-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 18px;
+  font-weight: 700;
+}
+.finder-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 16px 0 14px;
+}
+.finder-rows {
+  border-top: 1px solid var(--border);
+}
+.finder-row {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr) 32px;
+  gap: 12px;
+  align-items: center;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.finder-row > span:nth-child(2) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.finder-mono {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+}
+.finder-history {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.finder-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 6px 8px;
+  border-radius: 99px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.finder-chip.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}

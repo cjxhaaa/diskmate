@@ -455,6 +455,20 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
         ],
         gpus: [{ luid: "0x00000000_0x0000f7e2", name: "Intel(R) UHD Graphics 770", dedicatedTotal: 128 * 1048576, sharedTotal: 15.8 * GB }],
       } as T;
+    case "pick_window":
+      await sleep(1500);
+      return {
+        hwnd: 0x2048e, title: "DiskMate - GitHub", className: "Chrome_WidgetWin_1", pid: 14820, name: "chrome.exe",
+        path: String.raw`C:\Program Files\Google\Chrome\Application\chrome.exe`,
+        commandLine: String.raw`"C:\Program Files\Google\Chrome\Application\chrome.exe" --profile-directory=Default`,
+        startedAt: Math.floor(Date.now() / 1000) - 5400, memory: 412 * 1024 * 1024, threads: 47, parentPid: 9120, parentName: "explorer.exe",
+        elevated: false, hosted: false, description: "Google Chrome", company: "Google LLC", icon: null,
+      } as T;
+    case "last_pick":
+      return null as T;
+    case "focus_window":
+    case "end_pid":
+      return undefined as T;
     case "take_pending_page":
       return null as T;
     case "set_close_to_tray":
