@@ -45,7 +45,7 @@ pub enum Risk {
     Review,
 }
 
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, serde::Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Detail {
     pub label: String,

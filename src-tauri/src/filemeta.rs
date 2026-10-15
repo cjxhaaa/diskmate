@@ -5,6 +5,7 @@
 use crate::apps::powershell;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
@@ -29,8 +30,71 @@ fn non_empty(s: Option<String>) -> Option<String> {
     s.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+struct Cached {
+    modified: u64,
+    len: u64,
+    details: FileDetails,
+}
+
+const CACHE: &str = "files.json";
+static MEM: Mutex<Option<HashMap<String, Cached>>> = Mutex::new(None);
+
+/// What identifies this version of a file: when it was last written, and its length.
+fn stamp(path: &str) -> Option<(u64, u64)> {
+    let md = std::fs::metadata(path).ok()?;
+    Some((
+        md.modified().map(crate::util::unix_secs).unwrap_or(0),
+        md.len(),
+    ))
+}
+
 /// Details for each path, keyed by the path as given. Paths that cannot be read are left out.
+///
+/// Remembered on disk per file and reused while the file is unchanged, so only programs not seen
+/// before cost a PowerShell run.
 pub fn details(paths: &[String]) -> HashMap<String, FileDetails> {
+    let mut out = HashMap::new();
+    let mut missing = Vec::new();
+    {
+        let mut mem = MEM.lock().unwrap();
+        let cache = mem.get_or_insert_with(|| crate::cache::load(CACHE).unwrap_or_default());
+        for p in paths {
+            match (stamp(p), cache.get(p)) {
+                (Some((m, l)), Some(c)) if c.modified == m && c.len == l => {
+                    out.insert(p.clone(), c.details.clone());
+                }
+                (Some(_), _) => missing.push(p.clone()),
+                (None, _) => {}
+            }
+        }
+    }
+    if missing.is_empty() {
+        return out;
+    }
+    let found = query(&missing);
+    let mut mem = MEM.lock().unwrap();
+    let cache = mem.get_or_insert_with(HashMap::new);
+    for p in &missing {
+        let d = found.get(p).cloned().unwrap_or_default();
+        if let Some((modified, len)) = stamp(p) {
+            cache.insert(
+                p.clone(),
+                Cached {
+                    modified,
+                    len,
+                    details: d.clone(),
+                },
+            );
+        }
+        out.insert(p.clone(), d);
+    }
+    crate::cache::save(CACHE, &*cache);
+    out
+}
+
+/// Asks PowerShell about `paths`, all in one run.
+fn query(paths: &[String]) -> HashMap<String, FileDetails> {
     if paths.is_empty() {
         return HashMap::new();
     }
@@ -92,6 +156,10 @@ mod real {
     fn real_filemeta() {
         let p = r"C:\WINDOWS\system32\ctfmon.exe".to_string();
         let d = super::details(&[p.clone()]);
-        println!("{:?}", d.get(&p).map(|d| (&d.description, &d.company, d.icon.as_ref().map(|i| i.len()))));
+        println!(
+            "{:?}",
+            d.get(&p)
+                .map(|d| (&d.description, &d.company, d.icon.as_ref().map(|i| i.len())))
+        );
     }
 }

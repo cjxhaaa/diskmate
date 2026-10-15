@@ -352,6 +352,8 @@ export const api = {
   cleanAppLeftovers: (id: string, paths: string[]) => call<Outcome>("clean_app_leftovers", { id, paths }),
   onAppMeasured: (h: (m: AppMeasured) => void) => on("app-measured", h),
   onAppIcons: (h: (icons: Record<string, string>) => void) => on("app-icons", h),
+  onAppsUpdated: (h: (apps: AppInfo[]) => void) => on("apps-updated", h),
+  onPerfHardware: (h: (hw: HardwareInfo) => void) => on("perf-hardware", h),
   onAppUninstall: (h: (r: UninstallResult) => void) => on("app-uninstall", h),
   onScanProgress: (h: (p: ScanProgress) => void) => on("scan-progress", h),
   onScanDone: (h: (s: ScanSummary) => void) => on("scan-done", h),

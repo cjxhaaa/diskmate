@@ -1,4 +1,5 @@
 mod apps;
+mod cache;
 mod clean;
 mod downloads;
 mod dupes;
@@ -409,9 +410,10 @@ async fn analyze_downloads(app: AppHandle) -> Result<Vec<downloads::DownloadItem
         .map(|e| e.info.name.clone())
         .collect();
     tauri::async_runtime::spawn_blocking(move || {
-        // The app list is reused when the apps page has loaded it; otherwise read it here.
+        // The app list is reused when the apps page has loaded it; otherwise the registry and the
+        // last known Store list do, without waiting for PowerShell.
         let installed = if known.is_empty() {
-            apps::list().into_iter().map(|e| e.info.name).collect()
+            apps::names_quick()
         } else {
             known
         };
@@ -507,46 +509,135 @@ async fn delete_duplicates(
     Ok(out)
 }
 
-/// Every installed app, sizes not yet known. Sizes follow one app at a time as `app-measured`,
-/// icons all at once as `app-icons`.
-#[tauri::command]
-async fn list_apps(app: AppHandle) -> Result<Vec<apps::AppInfo>, String> {
-    let entries = tauri::async_runtime::spawn_blocking(apps::list)
-        .await
-        .map_err(|e| e.to_string())?;
+/// Sizes measured this recently are shown as they are, not measured again.
+const SIZES_FRESH_SECS: u64 = 30 * 60;
+const SIZES_CACHE: &str = "app-sizes.json";
+
+#[derive(Serialize, serde::Deserialize, Clone)]
+struct SizeRecord {
+    at: u64,
+    measured: apps::Measured,
+}
+
+/// Remembered sizes, shared by every measuring pass (a list and a background refresh can overlap).
+static SIZES: Mutex<Option<HashMap<String, SizeRecord>>> = Mutex::new(None);
+
+fn with_sizes<T>(f: impl FnOnce(&mut HashMap<String, SizeRecord>) -> T) -> T {
+    let mut s = SIZES.lock().unwrap();
+    f(s.get_or_insert_with(|| cache::load(SIZES_CACHE).unwrap_or_default()))
+}
+
+fn apply_size(info: &mut apps::AppInfo, m: &apps::Measured) {
+    info.install_size = m.install_size;
+    info.data_size = Some(m.data_size);
+    info.data_dirs = m.data_dirs.clone();
+    info.last_used = info.last_used.max(m.last_used);
+    info.measured = true;
+}
+
+/// Takes a fresh app list: fills in remembered sizes, keeps it for the other commands, and in the
+/// background measures what is not known (or, with `remeasure_old`, older than half an hour) and
+/// gathers icons. Returns what the page shows right away.
+fn adopt_apps(
+    app: &AppHandle,
+    mut entries: Vec<apps::AppEntry>,
+    remeasure_old: bool,
+) -> Vec<apps::AppInfo> {
+    let now = cache::now();
+    let mut stale = Vec::new();
+    with_sizes(|sizes| {
+        for e in &mut entries {
+            match sizes.get(&e.info.id) {
+                Some(r) => {
+                    apply_size(&mut e.info, &r.measured);
+                    if remeasure_old && now.saturating_sub(r.at) > SIZES_FRESH_SECS {
+                        stale.push(e.clone());
+                    }
+                }
+                None => stale.push(e.clone()),
+            }
+        }
+    });
     let infos: Vec<apps::AppInfo> = entries.iter().map(|e| e.info.clone()).collect();
-    {
-        let state = app.state::<AppState>();
-        *state.apps.lock().unwrap() = entries
-            .iter()
-            .map(|e| (e.info.id.clone(), e.clone()))
-            .collect();
-    }
-    {
-        let (app, entries) = (app.clone(), entries.clone());
+    *app.state::<AppState>().apps.lock().unwrap() = entries
+        .iter()
+        .map(|e| (e.info.id.clone(), e.clone()))
+        .collect();
+
+    if !stale.is_empty() {
+        let app = app.clone();
         std::thread::spawn(move || {
             use rayon::prelude::*;
             // Biggest registered size first, so the rows most worth looking at fill in first.
-            let mut order = entries;
-            order.sort_by_key(|e| std::cmp::Reverse(e.info.estimated_size));
-            order.par_iter().for_each(|entry| {
-                let m = apps::measure_app(entry);
-                let state = app.state::<AppState>();
-                if let Some(stored) = state.apps.lock().unwrap().get_mut(&m.id) {
-                    stored.info.install_size = m.install_size;
-                    stored.info.data_size = Some(m.data_size);
-                    stored.info.data_dirs = m.data_dirs.clone();
-                    stored.info.last_used = m.last_used;
-                    stored.info.measured = true;
-                }
-                let _ = app.emit("app-measured", m);
+            stale.sort_by_key(|e| std::cmp::Reverse(e.info.estimated_size));
+            util::passive_pool().install(|| {
+                stale.par_iter().for_each(|entry| {
+                    let m = apps::measure_app(entry);
+                    let state = app.state::<AppState>();
+                    if let Some(stored) = state.apps.lock().unwrap().get_mut(&m.id) {
+                        apply_size(&mut stored.info, &m);
+                    }
+                    with_sizes(|s| {
+                        s.insert(
+                            m.id.clone(),
+                            SizeRecord {
+                                at: cache::now(),
+                                measured: m.clone(),
+                            },
+                        );
+                    });
+                    let _ = app.emit("app-measured", m);
+                })
             });
+            with_sizes(|s| cache::save(SIZES_CACHE, &*s));
         });
     }
-    std::thread::spawn(move || {
-        let icons = apps::icons(&entries);
-        let _ = app.emit("app-icons", icons);
-    });
+    {
+        let app = app.clone();
+        std::thread::spawn(move || {
+            let icons = apps::icons(&entries);
+            let _ = app.emit("app-icons", icons);
+        });
+    }
+    infos
+}
+
+/// Every installed app. The Store part comes from the last answer when there is one (asking
+/// PowerShell takes ~3 s) and is asked again in the background; if it changed, the new list
+/// arrives as `apps-updated`. Sizes follow as `app-measured`, icons as `app-icons`.
+#[tauri::command]
+async fn list_apps(app: AppHandle) -> Result<Vec<apps::AppInfo>, String> {
+    let cached = apps::cached_store_json();
+    let had_cache = cached.is_some();
+    let entries = tauri::async_runtime::spawn_blocking(move || {
+        let json = cached.or_else(|| {
+            let j = apps::query_store_json();
+            if let Some(j) = &j {
+                apps::save_store_json(j);
+            }
+            j
+        });
+        apps::list_with(json.map(|j| apps::store_apps_from(&j)).unwrap_or_default())
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let infos = adopt_apps(&app, entries, true);
+
+    if had_cache {
+        let app = app.clone();
+        std::thread::spawn(move || {
+            let Some(fresh) = apps::query_store_json() else {
+                return;
+            };
+            if apps::cached_store_json().as_deref() == Some(fresh.as_str()) {
+                return;
+            }
+            apps::save_store_json(&fresh);
+            let entries = apps::list_with(apps::store_apps_from(&fresh));
+            let infos = adopt_apps(&app, entries, false);
+            let _ = app.emit("apps-updated", infos);
+        });
+    }
     Ok(infos)
 }
 
@@ -708,9 +799,23 @@ async fn perf_hardware(app: AppHandle) -> Result<perf::HardwareInfo, String> {
     if let Some(hw) = app.state::<AppState>().hardware.lock().unwrap().clone() {
         return Ok(hw);
     }
+    // Reading the hardware takes ~9 s of PowerShell; show the last answer and re-read it once per
+    // run in the background (an IP address or a new disk can change), sent as `perf-hardware`.
+    if let Some(hw) = cache::load::<perf::HardwareInfo>("hardware.json") {
+        *app.state::<AppState>().hardware.lock().unwrap() = Some(hw.clone());
+        let app = app.clone();
+        std::thread::spawn(move || {
+            let fresh = perf::hardware();
+            cache::save("hardware.json", &fresh);
+            *app.state::<AppState>().hardware.lock().unwrap() = Some(fresh.clone());
+            let _ = app.emit("perf-hardware", fresh);
+        });
+        return Ok(hw);
+    }
     let hw = tauri::async_runtime::spawn_blocking(perf::hardware)
         .await
         .map_err(|e| e.to_string())?;
+    cache::save("hardware.json", &hw);
     *app.state::<AppState>().hardware.lock().unwrap() = Some(hw.clone());
     Ok(hw)
 }
@@ -803,6 +908,7 @@ pub fn run() {
         }))
         .setup(|app| {
             let dir = data_dir(app.handle());
+            cache::init(dir.clone());
             tray::setup(app.handle(), &dir)?;
             Ok(())
         })
@@ -879,7 +985,10 @@ pub fn run() {
         .expect("error while running DiskMate")
         .run(|app, event| {
             // The last window closing asks to end the app; kept in the tray, it stays.
-            if let tauri::RunEvent::ExitRequested { code: None, api, .. } = event {
+            if let tauri::RunEvent::ExitRequested {
+                code: None, api, ..
+            } = event
+            {
                 let keep = app
                     .state::<tray::TrayState<tauri::Wry>>()
                     .settings

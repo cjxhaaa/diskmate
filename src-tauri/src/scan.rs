@@ -423,7 +423,12 @@ pub fn children(data: &ScanData, path: &str) -> Option<Vec<NodeView>> {
     if node.own + node.small > 0 {
         let direct = node.files - node.children.iter().map(|c| c.files).sum::<u64>();
         out.push(NodeView {
-            name: if node.small > 0 { "零散文件和小文件夹" } else { "此文件夹中的文件" }.into(),
+            name: if node.small > 0 {
+                "零散文件和小文件夹"
+            } else {
+                "此文件夹中的文件"
+            }
+            .into(),
             path: display(&target),
             size: node.own + node.small,
             files: direct,
@@ -480,7 +485,10 @@ mod tests {
         let mut data = run(&crate::util::system_drive(), &ctx);
         let before = count_nodes(&data.tree);
         prune(&mut data.tree);
-        println!("tree nodes {before} -> {} after pruning", count_nodes(&data.tree));
+        println!(
+            "tree nodes {before} -> {} after pruning",
+            count_nodes(&data.tree)
+        );
         let s = &data.summary;
         let gb = |b: u64| b as f64 / 1073741824.0;
         println!(
@@ -520,7 +528,12 @@ mod tests {
             files: 4,
             denied: false,
             small: 0,
-            children: vec![leaf("big", 5 * mb), leaf("tiny", 1000), leaf("tiny2", 2000), leaf("empty", 0)],
+            children: vec![
+                leaf("big", 5 * mb),
+                leaf("tiny", 1000),
+                leaf("tiny2", 2000),
+                leaf("empty", 0),
+            ],
         };
         root.files = 4;
         prune(&mut root);
@@ -535,7 +548,9 @@ mod tests {
         let rows = children(&data, r"C:\x").unwrap();
         let total: u64 = rows.iter().map(|r| r.size).sum();
         assert_eq!(total, 5 * mb + 3000, "the listing still adds up");
-        assert!(rows.iter().any(|r| r.is_files && r.name == "零散文件和小文件夹"));
+        assert!(rows
+            .iter()
+            .any(|r| r.is_files && r.name == "零散文件和小文件夹"));
     }
 
     #[test]

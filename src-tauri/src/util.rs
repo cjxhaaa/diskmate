@@ -259,8 +259,59 @@ pub fn background_thread() {
 /// four threads (NTFS serializes much of it); beyond that the extra threads only burn CPU —
 /// measured on a 20-thread i5: a full C: scan took 97–136 CPU-seconds on 20 threads and
 /// 68–75 on 4, in about the same time.
+/// Every running process as (pid, lowercase exe name), from a Toolhelp snapshot: a few
+/// milliseconds, where running tasklist.exe took the better part of a second.
+pub fn processes() -> Vec<(u32, String)> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+    let mut out = Vec::new();
+    unsafe {
+        let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
+            return out;
+        };
+        let mut e = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
+        let mut ok = Process32FirstW(snap, &mut e).is_ok();
+        while ok {
+            let len = e
+                .szExeFile
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(e.szExeFile.len());
+            out.push((
+                e.th32ProcessID,
+                String::from_utf16_lossy(&e.szExeFile[..len]).to_lowercase(),
+            ));
+            ok = Process32NextW(snap, &mut e).is_ok();
+        }
+        let _ = CloseHandle(snap);
+    }
+    out
+}
+
+/// A second, smaller pool for work nobody is waiting on (measuring every installed app after the
+/// list is shown), so it never holds up what the user just asked for in the main pool.
+pub fn passive_pool() -> &'static rayon::ThreadPool {
+    static POOL: std::sync::OnceLock<rayon::ThreadPool> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(2)
+            .thread_name(|i| format!("diskmate-passive-{i}"))
+            .start_handler(|_| background_thread())
+            .build()
+            .expect("thread pool")
+    })
+}
+
 pub fn init_worker_pool() {
-    let logical = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    let logical = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
     let _ = rayon::ThreadPoolBuilder::new()
         .num_threads((logical / 4).clamp(2, 6))
         .thread_name(|i| format!("diskmate-worker-{i}"))

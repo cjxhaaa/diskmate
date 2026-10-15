@@ -381,7 +381,8 @@ fn image_path(pid: u32) -> Option<String> {
         let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
         let mut buf = [0u16; 1024];
         let mut len = buf.len() as u32;
-        let r = QueryFullProcessImageNameW(h, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len);
+        let r =
+            QueryFullProcessImageNameW(h, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len);
         let _ = CloseHandle(h);
         r.ok()?;
         Some(String::from_utf16_lossy(&buf[..len as usize]))
@@ -396,7 +397,9 @@ impl ProcMonitor {
             mem: q.add(r"\Process(*)\Working Set - Private"),
             pid: q.add(r"\Process(*)\ID Process"),
             paths: HashMap::new(),
-            logical: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1) as f64,
+            logical: std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(1) as f64,
             q,
         };
         m.q.collect();
@@ -417,7 +420,13 @@ impl ProcMonitor {
             }
             let g = groups.entry(base.clone()).or_insert_with(|| {
                 (
-                    ProcGroup { name: base.clone(), count: 0, cpu: 0.0, memory: 0, path: None },
+                    ProcGroup {
+                        name: base.clone(),
+                        count: 0,
+                        cpu: 0.0,
+                        memory: 0,
+                        path: None,
+                    },
                     pid as u32,
                 )
             });
@@ -428,7 +437,11 @@ impl ProcMonitor {
         let mut out: Vec<ProcGroup> = groups
             .into_values()
             .map(|(mut g, pid)| {
-                g.path = self.paths.entry(pid).or_insert_with(|| image_path(pid)).clone();
+                g.path = self
+                    .paths
+                    .entry(pid)
+                    .or_insert_with(|| image_path(pid))
+                    .clone();
                 g.cpu = g.cpu.min(100.0);
                 g
             })
@@ -443,43 +456,44 @@ impl ProcMonitor {
 
 /// Processes Windows needs; ending them crashes or locks the session.
 const CRITICAL: &[&str] = &[
-    "system", "registry", "smss", "csrss", "wininit", "winlogon", "services", "lsass", "lsaiso",
-    "svchost", "dwm", "fontdrvhost", "memory compression", "secure system", "sihost", "explorer",
-    "ctfmon", "spoolsv", "audiodg", "searchindexer", "msmpeng", "securityhealthservice",
+    "system",
+    "registry",
+    "smss",
+    "csrss",
+    "wininit",
+    "winlogon",
+    "services",
+    "lsass",
+    "lsaiso",
+    "svchost",
+    "dwm",
+    "fontdrvhost",
+    "memory compression",
+    "secure system",
+    "sihost",
+    "explorer",
+    "ctfmon",
+    "spoolsv",
+    "audiodg",
+    "searchindexer",
+    "msmpeng",
+    "securityhealthservice",
 ];
 
 /// Ends every process named `name` (no `.exe`). Returns how many ended.
 pub fn end_group(name: &str) -> Result<u32, String> {
     use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
-        TH32CS_SNAPPROCESS,
-    };
     use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
     let lower = name.to_lowercase();
     if CRITICAL.contains(&lower.as_str()) {
         return Err(format!("{name} 是 Windows 运行必需的进程，不能结束"));
     }
     let me = std::process::id();
-    let mut pids = Vec::new();
-    unsafe {
-        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).map_err(|e| e.message())?;
-        let mut e = PROCESSENTRY32W {
-            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
-            ..Default::default()
-        };
-        let mut ok = Process32FirstW(snap, &mut e).is_ok();
-        while ok {
-            let len = e.szExeFile.iter().position(|&c| c == 0).unwrap_or(e.szExeFile.len());
-            let exe = String::from_utf16_lossy(&e.szExeFile[..len]).to_lowercase();
-            let stem = exe.strip_suffix(".exe").unwrap_or(&exe);
-            if stem == lower {
-                pids.push(e.th32ProcessID);
-            }
-            ok = Process32NextW(snap, &mut e).is_ok();
-        }
-        let _ = CloseHandle(snap);
-    }
+    let pids: Vec<u32> = crate::util::processes()
+        .into_iter()
+        .filter(|(_, exe)| exe.strip_suffix(".exe").unwrap_or(exe) == lower)
+        .map(|(pid, _)| pid)
+        .collect();
     if pids.contains(&me) {
         return Err("不能结束 DiskMate 自己".into());
     }
@@ -508,7 +522,7 @@ pub fn end_group(name: &str) -> Result<u32, String> {
 // Hardware description (read once)
 // ---------------------------------------------------------------------------------------------
 
-#[derive(Serialize, Clone, Default)]
+#[derive(Serialize, serde::Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CpuInfo {
     pub name: String,
@@ -521,7 +535,7 @@ pub struct CpuInfo {
     pub virtualization: Option<bool>,
 }
 
-#[derive(Serialize, Clone, Default)]
+#[derive(Serialize, serde::Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct MemInfo {
     pub speed_mhz: u32,
@@ -531,7 +545,7 @@ pub struct MemInfo {
     pub form: String,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, serde::Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct DiskInfo {
     pub index: u32,
@@ -543,7 +557,7 @@ pub struct DiskInfo {
     pub size: u64,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, serde::Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct NetInfo {
     /// Matches `NetSample::key`.
@@ -557,7 +571,7 @@ pub struct NetInfo {
     pub physical: bool,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, serde::Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct GpuInfo {
     pub luid: String,
@@ -566,7 +580,7 @@ pub struct GpuInfo {
     pub shared_total: u64,
 }
 
-#[derive(Serialize, Clone, Default)]
+#[derive(Serialize, serde::Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct HardwareInfo {
     pub cpu: CpuInfo,
@@ -577,19 +591,32 @@ pub struct HardwareInfo {
 }
 
 fn gpus() -> Vec<GpuInfo> {
-    use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE};
+    use windows::Win32::Graphics::Dxgi::{
+        CreateDXGIFactory1, IDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE,
+    };
     let Ok(f) = (unsafe { CreateDXGIFactory1::<IDXGIFactory1>() }) else {
         return Vec::new();
     };
     let mut out = Vec::new();
     for i in 0.. {
-        let Ok(a) = (unsafe { f.EnumAdapters1(i) }) else { break };
-        let Ok(d) = (unsafe { a.GetDesc1() }) else { continue };
+        let Ok(a) = (unsafe { f.EnumAdapters1(i) }) else {
+            break;
+        };
+        let Ok(d) = (unsafe { a.GetDesc1() }) else {
+            continue;
+        };
         if d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0 {
             continue;
         }
-        let len = d.Description.iter().position(|&c| c == 0).unwrap_or(d.Description.len());
-        let luid = format!("0x{:08x}_0x{:08x}", d.AdapterLuid.HighPart as u32, d.AdapterLuid.LowPart);
+        let len = d
+            .Description
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(d.Description.len());
+        let luid = format!(
+            "0x{:08x}_0x{:08x}",
+            d.AdapterLuid.HighPart as u32, d.AdapterLuid.LowPart
+        );
         if out.iter().any(|g: &GpuInfo| g.luid == luid) {
             continue;
         }
@@ -683,7 +710,9 @@ $nets = @(Get-NetAdapter | ForEach-Object {
                 let media = s(&d["media"]).to_lowercase();
                 NetInfo {
                     key: pdh_key(&desc),
-                    wireless: media.contains("802.11") || media == "9" || media.contains("wireless"),
+                    wireless: media.contains("802.11")
+                        || media == "9"
+                        || media.contains("wireless"),
                     description: desc,
                     alias: s(&d["alias"]),
                     ipv4: s(&d["ip"]),
@@ -748,7 +777,14 @@ mod real {
         let procs = p.sample();
         println!("{} groups in {:?}", procs.len(), t.elapsed());
         for g in procs.iter().take(8) {
-            println!("{:>5.1}% {:>8} MB x{} {} {:?}", g.cpu, g.memory / 1048576, g.count, g.name, g.path);
+            println!(
+                "{:>5.1}% {:>8} MB x{} {} {:?}",
+                g.cpu,
+                g.memory / 1048576,
+                g.count,
+                g.name,
+                g.path
+            );
         }
     }
 }

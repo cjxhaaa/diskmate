@@ -418,7 +418,9 @@ pub(crate) fn pretty_package_name(name: &str) -> String {
     out
 }
 
-fn store_apps() -> Vec<AppEntry> {
+/// The Store app list straight from PowerShell (~3 s): the slow part of listing apps, so it is
+/// cached (see [`cached_store_json`]) and re-asked in the background.
+pub fn query_store_json() -> Option<String> {
     let script = r#"
 Get-AppxPackage | Where-Object { -not $_.IsFramework -and -not $_.NonRemovable -and [string]$_.SignatureKind -ne 'System' } | ForEach-Object {
   $m = Get-AppxPackageManifest $_
@@ -429,9 +431,27 @@ Get-AppxPackage | Where-Object { -not $_.IsFramework -and -not $_.NonRemovable -
   }
 } | ConvertTo-Json -Compress
 "#;
-    let Some(json) = powershell(script) else {
-        return Vec::new();
-    };
+    powershell(script).map(|j| j.trim().to_string())
+}
+
+const STORE_CACHE: &str = "store-apps.json";
+
+pub fn cached_store_json() -> Option<String> {
+    crate::cache::load(STORE_CACHE)
+}
+
+pub fn save_store_json(json: &str) {
+    crate::cache::save(STORE_CACHE, &json);
+}
+
+#[cfg(test)]
+fn store_apps() -> Vec<AppEntry> {
+    query_store_json()
+        .map(|j| store_apps_from(&j))
+        .unwrap_or_default()
+}
+
+pub fn store_apps_from(json: &str) -> Vec<AppEntry> {
     let json = json.trim();
     let rows: Vec<AppxRow> = if json.starts_with('[') {
         serde_json::from_str(json).unwrap_or_default()
@@ -726,7 +746,55 @@ fn known_data_dirs(name: &str) -> Vec<(&'static str, PathBuf)> {
     Vec::new()
 }
 
-fn find_data_dirs(entry: &AppEntry, claimed: &mut HashSet<String>) -> Vec<(String, PathBuf)> {
+/// The folders under Roaming, Local and LocalLow, listed once for all apps (listing them again for
+/// each of ~180 apps was most of the time it took to list apps).
+struct DataRoots {
+    /// (label, [(compacted name, path, is a folder)])
+    roots: Vec<(&'static str, Vec<(String, PathBuf, bool)>)>,
+    /// Publisher folders listed so far: `Local\Google` → its subfolders.
+    subs: HashMap<PathBuf, Vec<(String, PathBuf)>>,
+}
+
+impl DataRoots {
+    fn read() -> Self {
+        let list = |dir: PathBuf| -> Vec<(String, PathBuf, bool)> {
+            std::fs::read_dir(dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|e| {
+                    let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                    (compact(&e.file_name().to_string_lossy()), e.path(), is_dir)
+                })
+                .collect()
+        };
+        DataRoots {
+            roots: vec![
+                ("Roaming", list(roaming_appdata())),
+                ("Local", list(local_appdata())),
+                ("LocalLow", list(home().join(r"AppData\LocalLow"))),
+            ],
+            subs: HashMap::new(),
+        }
+    }
+
+    fn subfolders(&mut self, dir: &Path) -> &[(String, PathBuf)] {
+        self.subs.entry(dir.to_path_buf()).or_insert_with(|| {
+            std::fs::read_dir(dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|e| (compact(&e.file_name().to_string_lossy()), e.path()))
+                .collect()
+        })
+    }
+}
+
+fn find_data_dirs(
+    entry: &AppEntry,
+    claimed: &mut HashSet<String>,
+    data: &mut DataRoots,
+) -> Vec<(String, PathBuf)> {
     let mut out: Vec<(String, PathBuf)> = known_data_dirs(&entry.info.name)
         .into_iter()
         .map(|(l, p)| (l.to_string(), p))
@@ -740,37 +808,32 @@ fn find_data_dirs(entry: &AppEntry, claimed: &mut HashSet<String>) -> Vec<(Strin
             .next()
             .unwrap_or(""),
     );
-    let locations = [
-        ("Roaming", roaming_appdata()),
-        ("Local", local_appdata()),
-        ("LocalLow", home().join(r"AppData\LocalLow")),
-    ];
-    for (loc_label, loc) in &locations {
-        let Ok(rd) = std::fs::read_dir(loc) else {
-            continue;
-        };
-        for e in rd.flatten() {
-            let folder = compact(&e.file_name().to_string_lossy());
-            let path = e.path();
-            if names.contains(&folder) {
-                out.push((format!("{loc_label} 数据"), path));
-            } else if !publisher_word.is_empty() && folder == publisher_word && path.is_dir() {
-                // Under the publisher's folder: `Local\Google\Chrome`, `Local\JetBrains\CLion2024.1`.
-                for sub in std::fs::read_dir(&path).into_iter().flatten().flatten() {
-                    let sub_name = compact(&sub.file_name().to_string_lossy());
-                    // `CLion2024.1` belongs to CLion; `ChromeForTesting` does not belong to Chrome. A
-                    // prefix only counts when what follows it is a version.
-                    let versioned = |n: &str| {
-                        n.len() >= 4
-                            && sub_name.starts_with(n)
-                            && sub_name[n.len()..]
-                                .chars()
-                                .next()
-                                .is_some_and(|c| c.is_ascii_digit())
-                    };
-                    if names.iter().any(|n| sub_name == *n || versioned(n)) {
-                        out.push((format!("{loc_label} 数据"), sub.path()));
-                    }
+    let mut publisher_dirs = Vec::new();
+    for (loc_label, entries) in &data.roots {
+        for (folder, path, is_dir) in entries {
+            if names.contains(folder) {
+                out.push((format!("{loc_label} 数据"), path.clone()));
+            } else if !publisher_word.is_empty() && *folder == publisher_word && *is_dir {
+                publisher_dirs.push((*loc_label, path.clone()));
+            }
+        }
+    }
+    for (loc_label, dir) in publisher_dirs {
+        {
+            // Under the publisher's folder: `Local\Google\Chrome`, `Local\JetBrains\CLion2024.1`.
+            for (sub_name, sub_path) in data.subfolders(&dir) {
+                // `CLion2024.1` belongs to CLion; `ChromeForTesting` does not belong to Chrome. A
+                // prefix only counts when what follows it is a version.
+                let versioned = |n: &str| {
+                    n.len() >= 4
+                        && sub_name.starts_with(n)
+                        && sub_name[n.len()..]
+                            .chars()
+                            .next()
+                            .is_some_and(|c| c.is_ascii_digit())
+                };
+                if names.iter().any(|n| sub_name == n || versioned(n)) {
+                    out.push((format!("{loc_label} 数据"), sub_path.clone()));
                 }
             }
         }
@@ -886,8 +949,27 @@ fn last_launch(entry: &AppEntry, launches: &[(String, u64)]) -> Option<u64> {
 // ---------------------------------------------------------------------------------------------
 
 /// Everything installed, sizes not yet measured. Fast: registry and the Store package list only.
+#[cfg(test)]
 pub fn list() -> Vec<AppEntry> {
-    let (mut apps, store) = rayon::join(registry_apps, store_apps);
+    list_with(store_apps())
+}
+
+/// Names of installed apps, without waiting for PowerShell: the registry plus the last known
+/// Store list.
+pub fn names_quick() -> Vec<String> {
+    let store = cached_store_json()
+        .map(|j| store_apps_from(&j))
+        .unwrap_or_default();
+    registry_apps()
+        .into_iter()
+        .chain(store)
+        .map(|e| e.info.name)
+        .collect()
+}
+
+/// Every installed app: the registry's (fast) plus `store`, with last use and data folders.
+pub fn list_with(store: Vec<AppEntry>) -> Vec<AppEntry> {
+    let mut apps = registry_apps();
     apps.extend(store);
     let launches = user_assist();
     for a in &mut apps {
@@ -898,8 +980,9 @@ pub fn list() -> Vec<AppEntry> {
     let mut order: Vec<usize> = (0..apps.len()).collect();
     order.sort_by_key(|&i| std::cmp::Reverse(apps[i].info.name.len()));
     let mut claimed = HashSet::new();
+    let mut data = DataRoots::read();
     for i in order {
-        let found = find_data_dirs(&apps[i], &mut claimed);
+        let found = find_data_dirs(&apps[i], &mut claimed, &mut data);
         for (label, path) in found {
             apps[i].info.data_dirs.push(Detail {
                 label,
@@ -911,7 +994,7 @@ pub fn list() -> Vec<AppEntry> {
     apps
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Measured {
     pub id: String,
@@ -956,8 +1039,8 @@ pub fn measure_app(entry: &AppEntry) -> Measured {
     }
 }
 
-/// App icons as PNG data URLs, keyed by app id. Win32 icons come out of one PowerShell batch;
-/// Store apps ship their own logo file.
+/// App icons as PNG data URLs, keyed by app id. Store apps ship a logo file; the rest come from
+/// [`crate::filemeta`], which remembers them, so only apps not seen before cost a PowerShell run.
 pub fn icons(apps: &[AppEntry]) -> HashMap<String, String> {
     let mut out = HashMap::new();
     for a in apps {
@@ -974,36 +1057,11 @@ pub fn icons(apps: &[AppEntry]) -> HashMap<String, String> {
         .iter()
         .filter_map(|a| a.icon_source.as_deref().map(|p| (a.info.id.as_str(), p)))
         .collect();
-    if wanted.is_empty() {
-        return out;
-    }
-    let list = std::env::temp_dir().join("diskmate-icons.json");
-    let paths: Vec<&str> = wanted.iter().map(|(_, p)| *p).collect();
-    if std::fs::write(&list, serde_json::to_vec(&paths).unwrap_or_default()).is_err() {
-        return out;
-    }
-    let script = format!(
-        r#"Add-Type -AssemblyName System.Drawing
-$paths = Get-Content -Raw -Encoding UTF8 '{}' | ConvertFrom-Json
-$out = @{{}}
-foreach ($p in $paths) {{
-  try {{
-    $ico = [System.Drawing.Icon]::ExtractAssociatedIcon($p)
-    $bmp = $ico.ToBitmap(); $ms = New-Object IO.MemoryStream
-    $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
-    $out[$p] = [Convert]::ToBase64String($ms.ToArray())
-  }} catch {{}}
-}}
-$out | ConvertTo-Json -Compress"#,
-        list.display().to_string().replace('\'', "''")
-    );
-    let by_path: HashMap<String, String> = powershell(&script)
-        .and_then(|json| serde_json::from_str(json.trim()).ok())
-        .unwrap_or_default();
-    let _ = std::fs::remove_file(&list);
+    let paths: Vec<String> = wanted.iter().map(|(_, p)| p.to_string()).collect();
+    let found = crate::filemeta::details(&paths);
     for (id, path) in wanted {
-        if let Some(b64) = by_path.get(path) {
-            out.insert(id.to_string(), format!("data:image/png;base64,{b64}"));
+        if let Some(icon) = found.get(path).and_then(|d| d.icon.clone()) {
+            out.insert(id.to_string(), icon);
         }
     }
     out
@@ -1167,5 +1225,35 @@ mod tests {
         let started = std::time::Instant::now();
         let icons = icons(&apps);
         println!("{} icons in {:?}", icons.len(), started.elapsed());
+    }
+}
+
+#[cfg(test)]
+mod real_split {
+    /// Timing of each part of listing apps: `cargo test --release real_split -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn real_split() {
+        let t = std::time::Instant::now();
+        let r = super::registry_apps();
+        println!("registry: {} apps in {:?}", r.len(), t.elapsed());
+        let t = std::time::Instant::now();
+        let s = super::store_apps();
+        println!("store (PowerShell): {} apps in {:?}", s.len(), t.elapsed());
+        crate::cache::init(crate::util::local_appdata().join("com.cjxhaaa.diskmate"));
+        let json = super::cached_store_json().expect("run the app once so the cache exists");
+        let t = std::time::Instant::now();
+        let store = super::store_apps_from(&json);
+        println!("store from cache: {} in {:?}", store.len(), t.elapsed());
+        let t = std::time::Instant::now();
+        let all = super::list_with(store);
+        println!(
+            "list_with (registry + user assist + data dirs): {} in {:?}",
+            all.len(),
+            t.elapsed()
+        );
+        let t = std::time::Instant::now();
+        let icons = super::icons(&all);
+        println!("icons from cache: {} in {:?}", icons.len(), t.elapsed());
     }
 }

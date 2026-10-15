@@ -137,16 +137,9 @@ fn save_records(dir: &Path, list: &[Record]) -> Result<(), String> {
 
 /// Lowercase names of every running process.
 pub fn running_processes() -> Vec<String> {
-    let Ok(out) = util::command("tasklist")
-        .args(["/fo", "csv", "/nh"])
-        .output()
-    else {
-        return Vec::new();
-    };
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .filter_map(|l| l.split(',').next())
-        .map(|n| n.trim_matches('"').to_lowercase())
+    util::processes()
+        .into_iter()
+        .map(|(_, name)| name)
         .collect()
 }
 
@@ -209,48 +202,51 @@ fn project_folders(exclude: &[PathBuf]) -> Vec<PathBuf> {
         .collect()
 }
 
+const SIZES_CACHE: &str = "move-sizes.json";
+
 /// Everything worth moving, with what is already moved. With `measure` false nothing is measured:
-/// sizes are 0 (except for moved folders, whose size was recorded) and every top-level folder is
-/// listed, big or not — it answers in a blink, for re-checking what is running.
+/// sizes are the last measured ones (or 0 for a folder never measured) and every top-level folder
+/// is listed, big or not — it answers in a blink, for showing the page and re-checking what runs.
 pub fn candidates(dir: &Path, measure_sizes: bool) -> Vec<Candidate> {
     use rayon::prelude::*;
     let moved = records(dir);
     let running = running_processes();
     let known = known();
     let known_paths: Vec<PathBuf> = known.iter().map(|k| k.path.clone()).collect();
+    let last: std::collections::HashMap<String, u64> =
+        crate::cache::load(SIZES_CACHE).unwrap_or_default();
     let size_of = |p: &Path, rec: Option<&Record>| match rec {
         Some(r) => (r.size, true),
         None if measure_sizes => (measure(p, None).bytes, true),
-        None => (0, false),
+        None => last.get(&display(p)).map_or((0, false), |&s| (s, true)),
     };
-    let mut out: Vec<Candidate> = known
-        .par_iter()
-        .filter(|k| k.path.exists())
-        .map(|k| {
-            let rec = moved.iter().find(|r| r.id == k.id);
-            let (size, measured) = size_of(&k.path, rec);
-            Candidate {
-                id: k.id.into(),
-                title: k.title.into(),
-                desc: k.desc.into(),
-                path: display(&k.path),
-                size,
-                method: k.method,
-                group: k.group,
-                blockers: blockers_for(k.blockers, &running),
-                moved_to: rec.map(|r| r.target.clone()),
-                measured,
-            }
-        })
-        .collect();
-    let projects: Vec<Candidate> = project_folders(&known_paths)
-        .par_iter()
-        .map(|p| {
-            let id = format!("folder:{}", display(p).to_lowercase());
-            let rec = moved.iter().find(|r| r.id == id);
-            let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-            let (size, measured) = size_of(p, rec);
-            Candidate {
+    let known: Vec<&Known> = known.iter().filter(|k| k.path.exists()).collect();
+    let make_known = |k: &&Known| {
+        let rec = moved.iter().find(|r| r.id == k.id);
+        let (size, measured) = size_of(&k.path, rec);
+        Candidate {
+            id: k.id.into(),
+            title: k.title.into(),
+            desc: k.desc.into(),
+            path: display(&k.path),
+            size,
+            method: k.method,
+            group: k.group,
+            blockers: blockers_for(k.blockers, &running),
+            moved_to: rec.map(|r| r.target.clone()),
+            measured,
+        }
+    };
+    let folders = project_folders(&known_paths);
+    let make_project = |p: &PathBuf| {
+        let id = format!("folder:{}", display(p).to_lowercase());
+        let rec = moved.iter().find(|r| r.id == id);
+        let name = p
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let (size, measured) = size_of(p, rec);
+        Candidate {
                 id,
                 title: name,
                 desc: "用户目录下的文件夹，通常是代码项目。搬走后原路径照常可用；IDE、终端里打开着的话要先关掉。".into(),
@@ -262,10 +258,33 @@ pub fn candidates(dir: &Path, measure_sizes: bool) -> Vec<Candidate> {
                 moved_to: rec.map(|r| r.target.clone()),
                 measured,
             }
-        })
+    };
+    // Measuring runs on the worker pool; the quick status stays on this thread, so it answers at
+    // once even while a scan or measuring keeps the pool busy.
+    let (mut out, projects): (Vec<Candidate>, Vec<Candidate>) = if measure_sizes {
+        (
+            known.par_iter().map(make_known).collect(),
+            folders.par_iter().map(make_project).collect(),
+        )
+    } else {
+        (
+            known.iter().map(make_known).collect(),
+            folders.iter().map(make_project).collect(),
+        )
+    };
+    let projects: Vec<Candidate> = projects
+        .into_iter()
         .filter(|c| !c.measured || c.size >= 1024 * 1024 * 1024 || c.moved_to.is_some())
         .collect();
     out.extend(projects);
+    if measure_sizes {
+        let sizes: std::collections::HashMap<String, u64> = out
+            .iter()
+            .filter(|c| c.moved_to.is_none())
+            .map(|c| (c.path.clone(), c.size))
+            .collect();
+        crate::cache::save(SIZES_CACHE, &sizes);
+    }
     out.sort_by(|a, b| {
         a.moved_to
             .is_some()

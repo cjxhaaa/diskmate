@@ -20,18 +20,29 @@ const GROUPS: { key: "disable" | "none" | "keep"; title: string; hint: string }[
 
 const groupOf = (i: StartupItem) => i.advice?.kind ?? "none";
 
+/** The last list, so coming back to the page shows it at once while it is read again. */
+let lastList: StartupItem[] | null = null;
+
 export function Startup() {
   const { toast } = useStore();
-  const [list, setList] = useState<StartupItem[] | null>(null);
+  const [list, setListState] = useState<StartupItem[] | null>(lastList);
+  const setList: typeof setListState = (v) =>
+    setListState((prev) => {
+      const next = typeof v === "function" ? v(prev) : v;
+      lastList = next;
+      return next;
+    });
   const [filter, setFilter] = useState<Filter>("all");
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [bulk, setBulk] = useState<StartupItem[] | null>(null);
 
   const load = useCallback(() => {
-    setList(null);
     api
       .listStartup()
-      .then(setList)
+      .then((l) => {
+        lastList = l;
+        setListState(l);
+      })
       .catch((e) => toast(`读取失败：${e}`));
   }, [toast]);
   useEffect(load, [load]);

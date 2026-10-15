@@ -222,6 +222,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setApps((list) => list?.map((a) => (a.id === m.id ? { ...a, ...m, measured: true } : a)) ?? null),
       ),
       api.onAppIcons((icons) => setAppIcons((old) => ({ ...old, ...icons }))),
+      // The Store list was re-read in the background and changed; sizes already shown are kept.
+      api.onAppsUpdated((fresh) =>
+        setApps((list) => {
+          const old = new Map((list ?? []).map((a) => [a.id, a]));
+          return fresh.map((a) => {
+            const o = old.get(a.id);
+            return !a.measured && o?.measured ? { ...a, installSize: o.installSize, dataSize: o.dataSize, dataDirs: o.dataDirs, lastUsed: o.lastUsed, measured: true } : a;
+          });
+        }),
+      ),
       api.onDupesProgress((p) => setDupes((d) => (d.status === "running" ? { ...d, progress: p } : d))),
       api.onDupesDone((groups) =>
         setDupes((d) => ({ status: "done", groups, minSize: d.status === "idle" ? 1024 * 1024 : d.minSize, at: Date.now() })),

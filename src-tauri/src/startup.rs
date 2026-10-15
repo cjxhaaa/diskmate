@@ -4,8 +4,8 @@
 //! an "approved" flag next to it says whether Explorer should run it. Task Manager, Settings and
 //! this page therefore always agree, and nothing is ever deleted.
 
-use crate::{apps, filemeta};
 use crate::util::{self, display, program_data, roaming_appdata, system_root};
+use crate::{apps, filemeta};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -15,8 +15,7 @@ use winreg::{RegKey, RegValue};
 const RUN: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const RUN32: &str = r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run";
 const APPROVED: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved";
-const STORE_TASKS: &str =
-    r"Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\SystemAppData";
+const STORE_TASKS: &str = r"Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\SystemAppData";
 
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -50,7 +49,11 @@ pub struct StartupItem {
 #[derive(Clone, Debug)]
 enum Flag {
     /// `StartupApproved\<sub>` under HKCU or HKLM, value named after the entry.
-    Approved { machine: bool, sub: &'static str, value: String },
+    Approved {
+        machine: bool,
+        sub: &'static str,
+        value: String,
+    },
     /// A Store app's startup task: `State` under its own key in HKCU.
     Store { key: String },
 }
@@ -68,7 +71,11 @@ struct Entry {
 }
 
 fn hive(machine: bool) -> RegKey {
-    RegKey::predef(if machine { HKEY_LOCAL_MACHINE } else { HKEY_CURRENT_USER })
+    RegKey::predef(if machine {
+        HKEY_LOCAL_MACHINE
+    } else {
+        HKEY_CURRENT_USER
+    })
 }
 
 /// Expands `%ProgramFiles%` and friends.
@@ -127,7 +134,11 @@ fn run_entries(machine: bool, path: &str, sub: &'static str, tag: &str, out: &mu
             command,
             source: "registry",
             all_users: machine,
-            flag: Flag::Approved { machine, sub, value: name },
+            flag: Flag::Approved {
+                machine,
+                sub,
+                value: name,
+            },
         });
     }
 }
@@ -149,7 +160,11 @@ fn folder_entries(dir: &Path, machine: bool, tag: &str, out: &mut Vec<Entry>) {
             file: Some(e.path()),
             source: "folder",
             all_users: machine,
-            flag: Flag::Approved { machine, sub: "StartupFolder", value: file },
+            flag: Flag::Approved {
+                machine,
+                sub: "StartupFolder",
+                value: file,
+            },
         });
     }
 }
@@ -160,6 +175,7 @@ fn store_name(family: &str) -> String {
     base.rsplit('.').next().unwrap_or(base).to_string()
 }
 
+#[derive(Serialize, serde::Deserialize, Clone)]
 struct StoreMeta {
     name: String,
     publisher: Option<String>,
@@ -175,6 +191,35 @@ struct AppxRow {
     display_name: Option<String>,
     publisher: Option<String>,
     logo: Option<String>,
+}
+
+const STORE_META_CACHE: &str = "startup-store.json";
+
+/// [`store_meta`], remembered: a package's name and logo do not change, so only families not seen
+/// before are asked about. A remembered family counts as installed while its folder under
+/// `AppData\Local\Packages` exists (Windows removes it with the app).
+fn store_meta_cached(families: &[String]) -> HashMap<String, StoreMeta> {
+    let mut known: HashMap<String, StoreMeta> =
+        crate::cache::load(STORE_META_CACHE).unwrap_or_default();
+    let packages = crate::util::local_appdata().join("Packages");
+    let missing: Vec<String> = families
+        .iter()
+        .filter(|f| !known.contains_key(*f) || !packages.join(f).is_dir())
+        .cloned()
+        .collect();
+    if !missing.is_empty() {
+        let fresh = store_meta(&missing);
+        for f in &missing {
+            known.remove(f);
+        }
+        known.extend(fresh);
+        crate::cache::save(STORE_META_CACHE, &known);
+    }
+    families
+        .iter()
+        .filter(|f| packages.join(f).is_dir())
+        .filter_map(|f| known.get(f).map(|m| (f.clone(), m.clone())))
+        .collect()
 }
 
 /// Names, publishers and logos of the installed packages among `families`. A family missing from
@@ -206,7 +251,9 @@ fn store_meta(families: &[String]) -> HashMap<String, StoreMeta> {
     let rows: Vec<AppxRow> = if json.starts_with('[') {
         serde_json::from_str(json).unwrap_or_default()
     } else {
-        serde_json::from_str::<AppxRow>(json).map(|r| vec![r]).unwrap_or_default()
+        serde_json::from_str::<AppxRow>(json)
+            .map(|r| vec![r])
+            .unwrap_or_default()
     };
     let resource = |s: &Option<String>| {
         s.clone()
@@ -222,7 +269,8 @@ fn store_meta(families: &[String]) -> HashMap<String, StoreMeta> {
                 .and_then(|p| std::fs::read(p).ok())
                 .map(|b| format!("data:image/png;base64,{}", apps::base64_encode(&b)));
             let meta = StoreMeta {
-                name: resource(&r.display_name).unwrap_or_else(|| apps::pretty_package_name(&r.name)),
+                name: resource(&r.display_name)
+                    .unwrap_or_else(|| apps::pretty_package_name(&r.name)),
                 publisher: resource(&r.publisher),
                 icon,
             };
@@ -237,9 +285,13 @@ fn store_entries(out: &mut Vec<Entry>) {
         return;
     };
     for family in tasks.enum_keys().flatten() {
-        let Ok(pkg) = tasks.open_subkey(&family) else { continue };
+        let Ok(pkg) = tasks.open_subkey(&family) else {
+            continue;
+        };
         for task in pkg.enum_keys().flatten() {
-            let Ok(t) = pkg.open_subkey(&task) else { continue };
+            let Ok(t) = pkg.open_subkey(&task) else {
+                continue;
+            };
             if t.get_value::<u32, _>("State").is_err() {
                 continue;
             }
@@ -250,7 +302,9 @@ fn store_entries(out: &mut Vec<Entry>) {
                 file: None,
                 source: "store",
                 all_users: false,
-                flag: Flag::Store { key: format!(r"{STORE_TASKS}\{family}\{task}") },
+                flag: Flag::Store {
+                    key: format!(r"{STORE_TASKS}\{family}\{task}"),
+                },
             });
         }
     }
@@ -280,7 +334,11 @@ fn entries() -> Vec<Entry> {
 /// Approved flags: the first byte is even when the entry may run (02, 06), odd when switched off.
 fn is_enabled(flag: &Flag) -> bool {
     match flag {
-        Flag::Approved { machine, sub, value } => hive(*machine)
+        Flag::Approved {
+            machine,
+            sub,
+            value,
+        } => hive(*machine)
             .open_subkey(format!(r"{APPROVED}\{sub}"))
             .and_then(|k| k.get_raw_value(value))
             .map(|v| v.bytes.first().is_none_or(|b| b & 1 == 0))
@@ -308,14 +366,42 @@ fn approved_bytes(enabled: bool) -> Vec<u8> {
 }
 
 const KEEP_DRIVERS: &[&str] = &[
-    "realtek", "synaptics", "elan", "intel", "nvidia", "advanced micro devices", "amd", "dolby",
-    "conexant", "waves", "logitech",
+    "realtek",
+    "synaptics",
+    "elan",
+    "intel",
+    "nvidia",
+    "advanced micro devices",
+    "amd",
+    "dolby",
+    "conexant",
+    "waves",
+    "logitech",
 ];
 const KEEP_SECURITY: &[&str] = &[
-    "huorong", "火绒", "kaspersky", "eset", "norton", "mcafee", "avast", "avg", "bitdefender",
-    "360", "tencent pc manager", "电脑管家",
+    "huorong",
+    "火绒",
+    "kaspersky",
+    "eset",
+    "norton",
+    "mcafee",
+    "avast",
+    "avg",
+    "bitdefender",
+    "360",
+    "tencent pc manager",
+    "电脑管家",
 ];
-const KEEP_INPUT: &[&str] = &["sogou", "搜狗", "pinyin", "拼音", "输入法", "ctfmon", "rime", "weasel"];
+const KEEP_INPUT: &[&str] = &[
+    "sogou",
+    "搜狗",
+    "pinyin",
+    "拼音",
+    "输入法",
+    "ctfmon",
+    "rime",
+    "weasel",
+];
 
 /// Names (lowercase substrings of the entry name or file) that rarely need to start with Windows.
 const ON_DEMAND: &[(&str, &str)] = &[
@@ -335,12 +421,24 @@ const ON_DEMAND: &[(&str, &str)] = &[
     ("aliyundrive", "网盘客户端，需要时再打开就行"),
     ("quark", "网盘客户端，需要时再打开就行"),
     ("msedge", "Edge 的「启动加速」，开机就在后台加载浏览器"),
-    ("microsoftedgeautolaunch", "Edge 的「启动加速」，开机就在后台加载浏览器"),
-    ("docker", "开发工具，需要时再打开就行，开机启动会额外占用不少内存"),
+    (
+        "microsoftedgeautolaunch",
+        "Edge 的「启动加速」，开机就在后台加载浏览器",
+    ),
+    (
+        "docker",
+        "开发工具，需要时再打开就行，开机启动会额外占用不少内存",
+    ),
     ("adobe", "Adobe 的后台服务，用 Adobe 软件时会自己启动"),
     ("ccxprocess", "Adobe 的后台服务，用 Adobe 软件时会自己启动"),
-    ("creative cloud", "Adobe 的后台服务，用 Adobe 软件时会自己启动"),
-    ("itunes", "iTunes 的辅助程序，接 iPhone 时 iTunes 会自己处理"),
+    (
+        "creative cloud",
+        "Adobe 的后台服务，用 Adobe 软件时会自己启动",
+    ),
+    (
+        "itunes",
+        "iTunes 的辅助程序，接 iPhone 时 iTunes 会自己处理",
+    ),
     ("skype", "聊天软件，需要时再打开就行"),
     ("cortana", "Cortana 已基本停用"),
 ];
@@ -362,16 +460,28 @@ fn advice(name: &str, file: Option<&Path>, company: Option<&str>) -> Option<Advi
         && !file_l.contains(r"\driverstore\")
         && !stem.contains("rundll32")
     {
-        return Some(Advice { kind: "keep", reason: "Windows 自带的组件" });
+        return Some(Advice {
+            kind: "keep",
+            reason: "Windows 自带的组件",
+        });
     }
     if company_l == "microsoft windows" {
-        return Some(Advice { kind: "keep", reason: "Windows 自带的组件" });
+        return Some(Advice {
+            kind: "keep",
+            reason: "Windows 自带的组件",
+        });
     }
     if has(KEEP_SECURITY, &company_l) || has(KEEP_SECURITY, &name_l) {
-        return Some(Advice { kind: "keep", reason: "安全软件，关掉后开机时不受保护" });
+        return Some(Advice {
+            kind: "keep",
+            reason: "安全软件，关掉后开机时不受保护",
+        });
     }
     if has(KEEP_INPUT, &name_l) || has(KEEP_INPUT, &stem) || has(KEEP_INPUT, &company_l) {
-        return Some(Advice { kind: "keep", reason: "输入法，关掉后可能要手动切换" });
+        return Some(Advice {
+            kind: "keep",
+            reason: "输入法，关掉后可能要手动切换",
+        });
     }
     let updater = ["update", "updater", "autoupdate"]
         .iter()
@@ -393,7 +503,10 @@ fn advice(name: &str, file: Option<&Path>, company: Option<&str>) -> Option<Advi
     if let Some((_, why)) = ON_DEMAND.iter().find(|(w, _)| {
         name_l.contains(w) || stem.contains(w) || dirs.iter().any(|d| d.starts_with(w))
     }) {
-        return Some(Advice { kind: "disable", reason: why });
+        return Some(Advice {
+            kind: "disable",
+            reason: why,
+        });
     }
     if has(KEEP_DRIVERS, &company_l) {
         return Some(Advice {
@@ -406,7 +519,10 @@ fn advice(name: &str, file: Option<&Path>, company: Option<&str>) -> Option<Advi
 
 /// Programs whose own name says nothing about what they run.
 fn is_host(stem: &str) -> bool {
-    matches!(stem, "rundll32" | "cmd" | "powershell" | "pwsh" | "wscript" | "cscript" | "explorer" | "conhost")
+    matches!(
+        stem,
+        "rundll32" | "cmd" | "powershell" | "pwsh" | "wscript" | "cscript" | "explorer" | "conhost"
+    )
 }
 
 pub fn list() -> Vec<StartupItem> {
@@ -424,7 +540,12 @@ pub fn list() -> Vec<StartupItem> {
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .collect();
-    let (meta, store) = rayon::join(|| filemeta::details(&files), || store_meta(&families));
+    // Two PowerShell runs at most (none when everything is remembered), side by side. Plain threads,
+    // not the worker pool: this is a quick lookup and must not queue behind a scan.
+    let (meta, store) = std::thread::scope(|s| {
+        let store = s.spawn(|| store_meta_cached(&families));
+        (filemeta::details(&files), store.join().unwrap_or_default())
+    });
     let mut out: Vec<StartupItem> = all
         .into_iter()
         .filter_map(|e| {
@@ -446,7 +567,11 @@ pub fn list() -> Vec<StartupItem> {
                 });
             }
             let key = e.file.as_deref().map(display);
-            let d = key.as_ref().and_then(|k| meta.get(k)).cloned().unwrap_or_default();
+            let d = key
+                .as_ref()
+                .and_then(|k| meta.get(k))
+                .cloned()
+                .unwrap_or_default();
             // A shortcut: what it opens is the program that matters.
             let program = match (&d.target, e.source) {
                 (Some(t), "folder") => Some(PathBuf::from(t)),
@@ -460,7 +585,9 @@ pub fn list() -> Vec<StartupItem> {
             // Value names are often ids ("com.squirrel.slack.slack"); a description reads better,
             // unless the program is a generic host like rundll32.
             let name = match (&d.description, e.source) {
-                (Some(desc), "registry") if !is_host(&stem) && desc.chars().count() <= 40 => desc.clone(),
+                (Some(desc), "registry") if !is_host(&stem) && desc.chars().count() <= 40 => {
+                    desc.clone()
+                }
                 _ => e.name.clone(),
             };
             let missing = program
@@ -481,7 +608,11 @@ pub fn list() -> Vec<StartupItem> {
             })
         })
         .collect();
-    out.sort_by(|a, b| b.enabled.cmp(&a.enabled).then(a.name.to_lowercase().cmp(&b.name.to_lowercase())));
+    out.sort_by(|a, b| {
+        b.enabled
+            .cmp(&a.enabled)
+            .then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
     out
 }
 
@@ -491,9 +622,7 @@ fn write_machine_flag(sub: &str, value: &str, bytes: &[u8]) -> Result<(), String
         return Err("这一项的名字里有引号，请到任务管理器里修改".into());
     }
     let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-    let args = format!(
-        r#"add "HKLM\{APPROVED}\{sub}" /v "{value}" /t REG_BINARY /d {hex} /f"#
-    );
+    let args = format!(r#"add "HKLM\{APPROVED}\{sub}" /v "{value}" /t REG_BINARY /d {hex} /f"#);
     let ps = format!(
         "$p = Start-Process -FilePath reg.exe -ArgumentList '{}' -Verb RunAs -Wait -WindowStyle Hidden -PassThru; exit $p.ExitCode",
         args.replace('\'', "''")
@@ -517,17 +646,28 @@ pub fn set_enabled(id: &str, enabled: bool) -> Result<(), String> {
         .find(|e| e.id == id)
         .ok_or("找不到这个启动项，可能已经被卸载")?;
     match &entry.flag {
-        Flag::Approved { machine: false, sub, value } => {
+        Flag::Approved {
+            machine: false,
+            sub,
+            value,
+        } => {
             let (key, _) = hive(false)
                 .create_subkey(format!(r"{APPROVED}\{sub}"))
                 .map_err(|e| e.to_string())?;
             key.set_raw_value(
                 value,
-                &RegValue { bytes: approved_bytes(enabled), vtype: REG_BINARY },
+                &RegValue {
+                    bytes: approved_bytes(enabled),
+                    vtype: REG_BINARY,
+                },
             )
             .map_err(|e| e.to_string())?;
         }
-        Flag::Approved { machine: true, sub, value } => {
+        Flag::Approved {
+            machine: true,
+            sub,
+            value,
+        } => {
             write_machine_flag(sub, value, &approved_bytes(enabled))?;
         }
         Flag::Store { key } => {
@@ -571,26 +711,50 @@ mod tests {
 
     #[test]
     fn advice_is_given_for_obvious_cases() {
-        let a = advice("Steam", Some(Path::new(r"C:\Program Files (x86)\Steam\steam.exe")), Some("Valve"));
+        let a = advice(
+            "Steam",
+            Some(Path::new(r"C:\Program Files (x86)\Steam\steam.exe")),
+            Some("Valve"),
+        );
         assert_eq!(a.unwrap().kind, "disable");
         let a = advice(
             "Teams",
-            Some(Path::new(r"C:\Users\me\AppData\Local\Microsoft\WindowsApps\MSTeams_8wekyb3d8bbwe\ms-teams.exe")),
+            Some(Path::new(
+                r"C:\Users\me\AppData\Local\Microsoft\WindowsApps\MSTeams_8wekyb3d8bbwe\ms-teams.exe",
+            )),
             Some("Microsoft"),
         );
         assert!(a.is_none(), "Teams is not Steam");
         let a = advice(
             "BaiduYunDetect",
-            Some(Path::new(r"C:\Users\me\AppData\Roaming\baidu\BaiduNetdisk\YunDetectService.exe")),
+            Some(Path::new(
+                r"C:\Users\me\AppData\Roaming\baidu\BaiduNetdisk\YunDetectService.exe",
+            )),
             None,
         );
         assert_eq!(a.unwrap().kind, "disable");
-        let a = advice("GoogleUpdater", Some(Path::new(r"C:\x\updater.exe")), Some("Google LLC"));
+        let a = advice(
+            "GoogleUpdater",
+            Some(Path::new(r"C:\x\updater.exe")),
+            Some("Google LLC"),
+        );
         assert_eq!(a.unwrap().kind, "disable");
-        let a = advice("RtkAudUService", Some(Path::new(r"C:\Drivers\RtkAudUService64.exe")), Some("Realtek Semiconductor"));
+        let a = advice(
+            "RtkAudUService",
+            Some(Path::new(r"C:\Drivers\RtkAudUService64.exe")),
+            Some("Realtek Semiconductor"),
+        );
         assert_eq!(a.unwrap().kind, "keep");
-        assert!(advice("MyTool", Some(Path::new(r"C:\Tools\tool.exe")), Some("Someone")).is_none());
-        assert_eq!(store_name("Microsoft.WindowsTerminal_8wekyb3d8bbwe"), "WindowsTerminal");
+        assert!(advice(
+            "MyTool",
+            Some(Path::new(r"C:\Tools\tool.exe")),
+            Some("Someone")
+        )
+        .is_none());
+        assert_eq!(
+            store_name("Microsoft.WindowsTerminal_8wekyb3d8bbwe"),
+            "WindowsTerminal"
+        );
     }
 }
 
@@ -630,7 +794,8 @@ mod real_toggle {
         let name = "DiskMateToggleTest";
         let id = format!("hkcu-run|{name}");
         let (run, _) = hive(false).create_subkey(RUN).unwrap();
-        run.set_value(name, &r"C:\Windows\System32\notepad.exe".to_string()).unwrap();
+        run.set_value(name, &r"C:\Windows\System32\notepad.exe".to_string())
+            .unwrap();
         let state = || list().into_iter().find(|i| i.id == id).map(|i| i.enabled);
         assert_eq!(state(), Some(true), "a new entry starts enabled");
         set_enabled(&id, false).unwrap();

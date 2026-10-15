@@ -172,7 +172,11 @@ pub fn setup<R: Runtime>(app: &AppHandle<R>, data_dir: &Path) -> tauri::Result<(
             TrayIconEvent::Enter { .. } => {
                 let line = space_line();
                 let _ = tray.set_tooltip(Some(format!("DiskMate\n{line}")));
-                let _ = tray.app_handle().state::<TrayState<R>>().space.set_text(line);
+                let _ = tray
+                    .app_handle()
+                    .state::<TrayState<R>>()
+                    .space
+                    .set_text(line);
             }
             _ => {}
         });

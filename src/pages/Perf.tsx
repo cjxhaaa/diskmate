@@ -655,9 +655,12 @@ export function Perf() {
     tick();
     const t = setInterval(tick, 1000);
     void api.perfHardware().then((h) => alive && setHw(h));
+    // The hardware shown first can be the last run's; the re-read one follows.
+    const offHw = api.onPerfHardware((h) => alive && setHw(h));
     return () => {
       alive = false;
       clearInterval(t);
+      void offHw.then((off) => off());
       // Close the counters; reopening them on the next visit costs a few milliseconds.
       void api.perfStop();
     };
