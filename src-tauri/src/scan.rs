@@ -15,6 +15,9 @@ use std::time::Instant;
 const LARGE_FILE_BYTES: u64 = 100 * 1024 * 1024;
 const LARGE_FILE_KEEP: usize = 500;
 const HARD_LINK_CHECK_BYTES: u64 = 8 * 1024 * 1024;
+/// Once a scan is summarized, folders smaller than this are folded into their parent: the
+/// browser never needs them one by one, and on a system drive they are most of the ~500k nodes.
+const KEEP_FOLDER_BYTES: u64 = 1024 * 1024;
 
 pub struct Node {
     pub name: String,
@@ -25,6 +28,8 @@ pub struct Node {
     pub files: u64,
     /// The folder could not be read (no permission). Its size is unknown, not zero.
     pub denied: bool,
+    /// Bytes in subfolders folded away by [`prune`].
+    pub small: u64,
     pub children: Vec<Node>,
 }
 
@@ -75,6 +80,7 @@ fn scan_dir(path: &Path, name: String, ctx: &ScanCtx) -> Node {
         own: 0,
         files: 0,
         denied: false,
+        small: 0,
         children: Vec::new(),
     };
     if ctx.cancel.load(Ordering::Relaxed) {
@@ -154,7 +160,7 @@ pub struct CategoryStat {
     pub bytes: u64,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Summary {
     pub root: String,
@@ -365,6 +371,29 @@ pub struct NodeView {
     pub is_files: bool,
 }
 
+/// Folds every folder under [`KEEP_FOLDER_BYTES`] into its parent's [`Node::small`]. Totals stay
+/// exact; only the breakdown below 1 MB goes.
+pub fn prune(node: &mut Node) {
+    let mut small = 0;
+    node.children.retain_mut(|c| {
+        if c.size < KEEP_FOLDER_BYTES && !c.denied {
+            small += c.size;
+            false
+        } else {
+            prune(c);
+            true
+        }
+    });
+    node.small += small;
+    node.children.shrink_to_fit();
+}
+
+/// Nodes in a tree, for measuring what a scan keeps in memory.
+#[cfg(test)]
+pub fn count_nodes(node: &Node) -> usize {
+    1 + node.children.iter().map(count_nodes).sum::<usize>()
+}
+
 /// The children of `path` in the last scan, biggest first, plus one entry for the folder's own files.
 pub fn children(data: &ScanData, path: &str) -> Option<Vec<NodeView>> {
     let target = PathBuf::from(path);
@@ -386,17 +415,17 @@ pub fn children(data: &ScanData, path: &str) -> Option<Vec<NodeView>> {
             path: display(&target.join(&c.name)),
             size: c.size,
             files: c.files,
-            has_children: !c.children.is_empty() || c.own > 0,
+            has_children: !c.children.is_empty() || c.own > 0 || c.small > 0,
             denied: c.denied,
             is_files: false,
         })
         .collect();
-    if node.own > 0 {
+    if node.own + node.small > 0 {
         let direct = node.files - node.children.iter().map(|c| c.files).sum::<u64>();
         out.push(NodeView {
-            name: "此文件夹中的文件".into(),
+            name: if node.small > 0 { "零散文件和小文件夹" } else { "此文件夹中的文件" }.into(),
             path: display(&target),
-            size: node.own,
+            size: node.own + node.small,
             files: direct,
             has_children: false,
             denied: false,
@@ -448,7 +477,10 @@ mod tests {
     #[ignore]
     fn real_scan() {
         let ctx = ScanCtx::default();
-        let data = run(&crate::util::system_drive(), &ctx);
+        let mut data = run(&crate::util::system_drive(), &ctx);
+        let before = count_nodes(&data.tree);
+        prune(&mut data.tree);
+        println!("tree nodes {before} -> {} after pruning", count_nodes(&data.tree));
         let s = &data.summary;
         let gb = |b: u64| b as f64 / 1073741824.0;
         println!(
@@ -467,6 +499,43 @@ mod tests {
         for f in data.large.iter().take(8) {
             println!("  {:>8.2} GB  {}", gb(f.size), f.path);
         }
+    }
+
+    #[test]
+    fn pruning_folds_small_folders_without_losing_bytes() {
+        let leaf = |name: &str, size: u64| Node {
+            name: name.into(),
+            size,
+            own: size,
+            files: 1,
+            denied: false,
+            small: 0,
+            children: vec![],
+        };
+        let mb = 1024 * 1024;
+        let mut root = Node {
+            name: "root".into(),
+            size: 5 * mb + 3000,
+            own: 0,
+            files: 4,
+            denied: false,
+            small: 0,
+            children: vec![leaf("big", 5 * mb), leaf("tiny", 1000), leaf("tiny2", 2000), leaf("empty", 0)],
+        };
+        root.files = 4;
+        prune(&mut root);
+        assert_eq!(root.children.len(), 1, "only the 5 MB folder stays");
+        assert_eq!(root.small, 3000);
+        let data = ScanData {
+            root: PathBuf::from(r"C:\x"),
+            tree: root,
+            large: vec![],
+            summary: Summary::default(),
+        };
+        let rows = children(&data, r"C:\x").unwrap();
+        let total: u64 = rows.iter().map(|r| r.size).sum();
+        assert_eq!(total, 5 * mb + 3000, "the listing still adds up");
+        assert!(rows.iter().any(|r| r.is_files && r.name == "零散文件和小文件夹"));
     }
 
     #[test]

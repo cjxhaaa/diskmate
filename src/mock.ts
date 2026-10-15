@@ -455,6 +455,8 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
         ],
         gpus: [{ luid: "0x00000000_0x0000f7e2", name: "Intel(R) UHD Graphics 770", dedicatedTotal: 128 * 1048576, sharedTotal: 15.8 * GB }],
       } as T;
+    case "perf_stop":
+      return undefined as T;
     case "file_details":
       return {} as T;
     case "end_process":

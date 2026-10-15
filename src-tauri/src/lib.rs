@@ -220,6 +220,9 @@ fn start_scan(app: AppHandle, state: State<AppState>, root: String) -> Result<()
         drop(scanning);
         let summary = data.summary.clone();
         let _ = history::save(&history_dir(&app), &data);
+        // History and categories are taken; the browser only needs folders of 1 MB and up.
+        let mut data = data;
+        scan::prune(&mut data.tree);
         state
             .scans
             .lock()
@@ -720,6 +723,13 @@ async fn file_details(
         .map_err(|e| e.to_string())
 }
 
+/// Leaving the performance page: close the counters instead of keeping them open.
+#[tauri::command]
+fn perf_stop(state: State<AppState>) {
+    *state.perf.lock().unwrap() = None;
+    *state.procs.lock().unwrap() = None;
+}
+
 #[tauri::command]
 fn end_process(name: String) -> Result<u32, String> {
     perf::end_group(&name)
@@ -730,9 +740,44 @@ fn reveal_path(path: String) -> Result<(), String> {
     sys::reveal(&PathBuf::from(path))
 }
 
+/// While minimized, asks WebView2 to keep as little memory as it can (it trims caches and
+/// working sets); back to normal when the window comes back.
+fn webview_memory_low(window: &tauri::WebviewWindow, low: bool) {
+    static LOW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if LOW.swap(low, Ordering::Relaxed) == low {
+        return;
+    }
+    let _ = window.with_webview(move |wv| unsafe {
+        use webview2_com::Microsoft::Web::WebView2::Win32::{
+            ICoreWebView2_19, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW,
+            COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL,
+        };
+        use windows_core::Interface;
+        let Ok(core) = wv.controller().CoreWebView2() else {
+            return;
+        };
+        if let Ok(core) = core.cast::<ICoreWebView2_19>() {
+            let _ = core.SetMemoryUsageTargetLevel(if low {
+                COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW
+            } else {
+                COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL
+            });
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    util::init_worker_pool();
     tauri::Builder::default()
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Resized(_) = event {
+                let minimized = window.is_minimized().unwrap_or(false);
+                if let Some(w) = window.app_handle().get_webview_window(window.label()) {
+                    webview_memory_low(&w, minimized);
+                }
+            }
+        })
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             list_drives,
@@ -767,6 +812,7 @@ pub fn run() {
             perf_hardware,
             file_details,
             end_process,
+            perf_stop,
             reveal_path
         ])
         .run(tauri::generate_context!())

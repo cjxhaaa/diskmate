@@ -20,6 +20,9 @@ rayon = "1"
 trash = "5"
 winreg = "0.55"
 blake3 = "1"
+# The same versions Tauri uses, for reaching WebView2 settings it does not expose.
+webview2-com = "0.39"
+windows-core = "0.62"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = [

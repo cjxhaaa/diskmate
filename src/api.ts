@@ -340,6 +340,7 @@ export const api = {
   perfHardware: () => call<HardwareInfo>("perf_hardware"),
   fileDetails: (paths: string[]) => call<Record<string, FileDetails>>("file_details", { paths }),
   endProcess: (name: string) => call<number>("end_process", { name }),
+  perfStop: () => call<void>("perf_stop"),
   listApps: () => call<AppInfo[]>("list_apps"),
   uninstallApp: (id: string) => call<void>("uninstall_app", { id }),
   stopUninstallWait: (id: string) => call<void>("stop_uninstall_wait", { id }),

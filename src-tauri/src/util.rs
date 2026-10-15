@@ -235,11 +235,35 @@ pub fn unix_secs(t: SystemTime) -> u64 {
         .unwrap_or(0)
 }
 
-/// Runs a command without flashing a console window.
+/// Runs a command without flashing a console window, below normal priority: PowerShell queries,
+/// robocopy and the like are DiskMate's chores and should give way to whatever the user is doing.
 pub fn command(program: &str) -> std::process::Command {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
     let mut cmd = std::process::Command::new(program);
-    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd.creation_flags(CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS);
     cmd
+}
+
+/// Puts the calling thread in background mode: lowest CPU priority, and low disk and memory
+/// priority too, so a scan yields to other programs instead of competing with them.
+pub fn background_thread() {
+    use windows::Win32::System::Threading::{
+        GetCurrentThread, SetThreadPriority, THREAD_MODE_BACKGROUND_BEGIN,
+    };
+    let _ = unsafe { SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN) };
+}
+
+/// Worker threads for scans and measuring. Walking directories stops getting faster at about
+/// four threads (NTFS serializes much of it); beyond that the extra threads only burn CPU —
+/// measured on a 20-thread i5: a full C: scan took 97–136 CPU-seconds on 20 threads and
+/// 68–75 on 4, in about the same time.
+pub fn init_worker_pool() {
+    let logical = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    let _ = rayon::ThreadPoolBuilder::new()
+        .num_threads((logical / 4).clamp(2, 6))
+        .thread_name(|i| format!("diskmate-worker-{i}"))
+        .start_handler(|_| background_thread())
+        .build_global();
 }

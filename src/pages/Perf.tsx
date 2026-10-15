@@ -658,6 +658,8 @@ export function Perf() {
     return () => {
       alive = false;
       clearInterval(t);
+      // Close the counters; reopening them on the next visit costs a few milliseconds.
+      void api.perfStop();
     };
   }, [toast]);
 
