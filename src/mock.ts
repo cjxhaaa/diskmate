@@ -163,6 +163,27 @@ const appList = apps.map(([name, publisher, version, tags, inst, data, ago, date
 
 let mockStatusChecks = 0;
 
+const startupItems = [
+  { id: "hkcu-run|Steam", name: "Steam", command: String.raw`"C:\Program Files (x86)\Steam\steam.exe" -silent`, path: String.raw`C:\Program Files (x86)\Steam\steam.exe`, publisher: "Valve Corporation", icon: null, source: "registry", allUsers: false, enabled: true, missing: false, advice: { kind: "disable", reason: "游戏平台，玩游戏时再打开就行" } },
+  { id: "hkcu-run|MicrosoftEdgeAutoLaunch", name: "Microsoft Edge", command: String.raw`"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" --no-startup-window`, path: String.raw`C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`, publisher: "Microsoft Corporation", icon: null, source: "registry", allUsers: false, enabled: true, missing: false, advice: { kind: "disable", reason: "Edge 的「启动加速」，开机就在后台加载浏览器" } },
+  { id: "hkcu-run|QuarkUpdater", name: "QuarkUpdater (x64)", command: String.raw`C:\Users\40501\AppData\Local\QuarkUpdater\updater.exe --wake`, path: String.raw`C:\Users\40501\AppData\Local\QuarkUpdater\updater.exe`, publisher: "Quark", icon: null, source: "registry", allUsers: false, enabled: true, missing: false, advice: { kind: "disable", reason: "自动更新程序，关掉后软件打开时仍会自己检查更新" } },
+  { id: "hkcu-run|Slack", name: "Slack", command: String.raw`C:\Users\40501\AppData\Local\slack\slack.exe --process-start-args --startup`, path: String.raw`C:\Users\40501\AppData\Local\slack\slack.exe`, publisher: "Slack Technologies Inc.", icon: null, source: "registry", allUsers: false, enabled: true, missing: false, advice: null },
+  { id: "hkcu-run|OneDrive", name: "Microsoft OneDrive", command: String.raw`"C:\Users\40501\AppData\Local\Microsoft\OneDrive\OneDrive.exe" /background`, path: String.raw`C:\Users\40501\AppData\Local\Microsoft\OneDrive\OneDrive.exe`, publisher: "Microsoft Corporation", icon: null, source: "registry", allUsers: false, enabled: true, missing: false, advice: null },
+  { id: "store|Claude_pzs8sxrjxfjjc|ClaudeStartup", name: "Claude", command: "Claude_pzs8sxrjxfjjc", path: null, publisher: "Anthropic, PBC", icon: null, source: "store", allUsers: false, enabled: false, missing: false, advice: null },
+  { id: "user-folder|OldTool.lnk", name: "OldTool", command: String.raw`C:\Users\40501\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\OldTool.lnk`, path: String.raw`C:\Tools\OldTool\oldtool.exe`, publisher: null, icon: null, source: "folder", allUsers: false, enabled: true, missing: true, advice: null },
+  { id: "hklm-run|RtkAudUService", name: "Realtek HD Audio Universal Service", command: String.raw`"C:\WINDOWS\System32\DriverStore\FileRepository\realtekservice.inf_amd64\RtkAudUService64.exe" -background`, path: String.raw`C:\WINDOWS\System32\DriverStore\FileRepository\realtekservice.inf_amd64\RtkAudUService64.exe`, publisher: "Realtek Semiconductor", icon: null, source: "registry", allUsers: true, enabled: true, missing: false, advice: { kind: "keep", reason: "硬件的配套程序，关掉后声音、触控板、显卡设置等可能不正常" } },
+  { id: "hklm-run|SecurityHealth", name: "Windows Security notification icon", command: String.raw`%windir%\system32\SecurityHealthSystray.exe`, path: String.raw`C:\WINDOWS\system32\SecurityHealthSystray.exe`, publisher: "Microsoft Corporation", icon: null, source: "registry", allUsers: true, enabled: true, missing: false, advice: { kind: "keep", reason: "Windows 自带的组件" } },
+  { id: "hklm-run|MuseHub", name: "MuseHub", command: String.raw`"C:\Program Files\MuseHub\current\MuseHub.exe" --autostart`, path: String.raw`C:\Program Files\MuseHub\current\MuseHub.exe`, publisher: "MuseHub", icon: null, source: "registry", allUsers: true, enabled: false, missing: false, advice: null },
+];
+
+/** A random walk per metric, so the mock graphs move like real ones. */
+const walk: Record<string, number> = {};
+const step = (key: string, lo: number, hi: number, jump: number) => {
+  const v = walk[key] ?? (lo + hi) / 2;
+  walk[key] = Math.min(hi, Math.max(lo, v + (Math.random() - 0.5) * jump));
+  return walk[key];
+};
+
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   if (cmd === "list_apps") {
     await sleep(500);
@@ -365,6 +386,81 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
       })();
       return undefined as T;
     }
+    case "list_startup":
+      await sleep(1200);
+      return startupItems.map((i) => ({ ...i })) as T;
+    case "set_startup_enabled": {
+      await sleep(String(args?.id).startsWith("hklm") ? 1200 : 200);
+      const item = startupItems.find((i) => i.id === args?.id);
+      if (item) item.enabled = Boolean(args?.enabled);
+      return undefined as T;
+    }
+    case "perf_sample": {
+      const cores = Array.from({ length: 20 }, (_, i) => step(`core${i}`, 0, 100, 30));
+      return {
+        cpu: step("cpu", 3, 70, 14),
+        cores,
+        cpuMhz: step("mhz", 2400, 4600, 400),
+        memTotal: 31.7 * GB,
+        memUsed: step("mem", 18 * GB, 29 * GB, 0.4 * GB),
+        memCached: 1.7 * GB,
+        commitTotal: 52.9 * GB,
+        commitLimit: 56.7 * GB,
+        pagedPool: 1.04 * GB,
+        nonpagedPool: 2.38 * GB,
+        processes: 485,
+        threads: 8180,
+        handles: 234878,
+        uptimeSecs: 46493 + Math.floor(performance.now() / 1000),
+        disks: [
+          { index: 0, letters: "C:", active: step("d0", 0, 60, 25), read: step("d0r", 0, 80e6, 30e6), write: step("d0w", 0, 40e6, 20e6), responseMs: step("d0ms", 0.1, 3, 1) },
+          { index: 1, letters: "D:", active: step("d1", 0, 8, 4), read: step("d1r", 0, 2e6, 1e6), write: 0, responseMs: 0.2 },
+        ],
+        nets: [
+          { key: "realtek pcie gbe family controller", name: "Realtek PCIe GbE Family Controller", recv: step("nr", 0, 4e6, 2e6), sent: step("ns", 0, 6e5, 3e5), bandwidth: 1e9 },
+          { key: "hyper-v virtual ethernet adapter", name: "Hyper-V Virtual Ethernet Adapter", recv: 0, sent: 0, bandwidth: 1e10 },
+        ],
+        gpus: [
+          { luid: "0x00000000_0x0000f7e2", util: step("gpu", 0, 60, 20), engines: [["3D", walk.gpu], ["VideoDecode", step("vd", 0, 20, 8)], ["Copy", 1]], dedicatedUsed: 0, sharedUsed: step("gm", 3.5 * GB, 4.5 * GB, 0.1 * GB) },
+        ],
+      } as T;
+    }
+    case "perf_processes": {
+      const p = (name: string, cpu: number, memory: number, count = 1, path: string | null = null) => ({ name, cpu: step(`p-${name}`, 0, cpu, cpu / 2), memory: memory * 1048576, count, path });
+      return [
+        p("chrome", 18, 3420, 32, String.raw`C:\Program Files\Google\Chrome\Application\chrome.exe`),
+        p("Code", 9, 1890, 14, String.raw`C:\Users\40501\AppData\Local\Programs\Microsoft VS Code\Code.exe`),
+        p("vmmemWSL", 6, 2550),
+        p("Weixin", 4, 820, 6, String.raw`C:\Program Files\Tencent\Weixin\Weixin.exe`),
+        p("dwm", 3, 52),
+        p("slack", 2, 640, 5, String.raw`C:\Users\40501\AppData\Local\slack\slack.exe`),
+        p("System", 1.5, 0),
+        p("explorer", 1, 210, 1, String.raw`C:\Windows\explorer.exe`),
+        p("diskmate", 0.6, 48, 1),
+        p("svchost", 0.8, 960, 88),
+      ] as T;
+    }
+    case "perf_hardware":
+      await sleep(1500);
+      return {
+        cpu: { name: "13th Gen Intel(R) Core(TM) i5-13500", baseMhz: 2500, cores: 14, logical: 20, sockets: 1, l2Kb: 11776, l3Kb: 24576, virtualization: false },
+        mem: { speedMhz: 3200, slotsUsed: 2, slotsTotal: 2, form: "DIMM" },
+        disks: [
+          { index: 0, model: "UMIS RPEYJ512MKN1QWQ", media: "SSD", bus: "NVMe", size: 512 * GB },
+          { index: 1, model: "UMIS RPEYJ512MKN1QWQ", media: "SSD", bus: "NVMe", size: 512 * GB },
+        ],
+        nets: [
+          { key: "realtek pcie gbe family controller", description: "Realtek PCIe GbE Family Controller", alias: "以太网", ipv4: "192.168.50.176", wireless: false, physical: true },
+          { key: "hyper-v virtual ethernet adapter", description: "Hyper-V Virtual Ethernet Adapter", alias: "vEthernet (WSL)", ipv4: "172.23.112.1", wireless: false, physical: false },
+        ],
+        gpus: [{ luid: "0x00000000_0x0000f7e2", name: "Intel(R) UHD Graphics 770", dedicatedTotal: 128 * 1048576, sharedTotal: 15.8 * GB }],
+      } as T;
+    case "file_details":
+      return {} as T;
+    case "end_process":
+      await sleep(300);
+      if (args?.name === "System") throw "System 是 Windows 运行必需的进程，不能结束";
+      return 3 as T;
     case "list_vdisks":
       return [
         { path: String.raw`D:\WSL\Ubuntu\ext4.vhdx`, size: 330 * GB, owner: "WSL · Ubuntu", kind: "wsl", inUse: true },

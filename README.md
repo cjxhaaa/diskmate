@@ -38,6 +38,14 @@ npkill / kondo（开发者构建产物）的做法，针对「开发者的 C 盘
     `wsl --shutdown`，然后用 diskpart（管理员）compact。
 - **空间变化**：每次扫描保存一份快照（总量、各类别、所有 50 MB 以上的文件夹，每个盘保留 30 次），
   画出已用空间的趋势，和任意一次历史扫描对比哪些文件夹变大 / 变小。启动时如果 24 小时内扫描过，直接显示上次结果。
+- **开机启动**：注册表 Run（当前用户 / 所有用户 / 32 位）、两个「启动」文件夹、应用商店应用的启动任务。
+  开关写的是 `Explorer\StartupApproved` 里的标记（商店应用写 `State`），和任务管理器「启动应用」是同一个设置，
+  不删除任何东西；所有用户的项通过管理员授权的 reg.exe 修改。按规则给出「可以关掉」（自动更新程序、游戏平台、
+  音乐 / 网盘客户端、Edge 启动加速等）和「建议保留」（系统组件、驱动配套程序、安全软件、输入法），程序文件已不存在的会标出来。
+- **性能**：仿任务管理器的性能页，每秒采样，60 秒历史。计数器用 PDH 的英文名（`PdhAddEnglishCounterW`），
+  中文系统上也能用；CPU 用 `% Processor Utility`（和任务管理器一致），磁盘 / 网络 / GPU 引擎同样走 PDH，
+  内存走 GlobalMemoryStatusEx + GetPerformanceInfo，显卡名称和 LUID 来自 DXGI，硬件型号（CPU 缓存、内存频率、
+  磁盘型号、网卡）由一次 CIM 查询得到并缓存。下方列出按程序合并的进程（CPU / 内存），可以结束任务，Windows 必需的进程会被拒绝。
 
 ## 安全设计
 
@@ -65,6 +73,9 @@ cd src-tauri
 cargo test                                         # 单元测试
 cargo test --release real_scan -- --ignored --nocapture      # 只读：扫描本机系统盘
 cargo test --release real_analysis -- --ignored --nocapture  # 只读：分析本机可清理内容
+cargo test --release real_startup -- --ignored --nocapture   # 只读：列出本机启动项
+cargo test --release real_perf -- --ignored --nocapture      # 只读：硬件信息、一次性能采样和进程
+cargo test --release real_toggle -- --ignored --nocapture    # 建一个临时 Run 项，关 / 开后删掉
 ```
 
 ## 已知限制

@@ -210,6 +210,67 @@ export interface MoveDone {
   error: string | null;
 }
 
+export interface StartupItem {
+  id: string;
+  name: string;
+  command: string;
+  path: string | null;
+  publisher: string | null;
+  icon: string | null;
+  source: "registry" | "folder" | "store";
+  /** Registered for every user: changing it needs administrator rights. */
+  allUsers: boolean;
+  enabled: boolean;
+  /** The program file is gone, so the entry does nothing. */
+  missing: boolean;
+  advice: { kind: "disable" | "keep"; reason: string } | null;
+}
+
+export interface PerfSample {
+  cpu: number;
+  cores: number[];
+  cpuMhz: number;
+  memTotal: number;
+  memUsed: number;
+  memCached: number;
+  commitTotal: number;
+  commitLimit: number;
+  pagedPool: number;
+  nonpagedPool: number;
+  processes: number;
+  threads: number;
+  handles: number;
+  uptimeSecs: number;
+  disks: { index: number; letters: string; active: number; read: number; write: number; responseMs: number }[];
+  /** Bytes per second; bandwidth in bits per second. */
+  nets: { key: string; name: string; recv: number; sent: number; bandwidth: number }[];
+  gpus: { luid: string; util: number; engines: [string, number][]; dedicatedUsed: number; sharedUsed: number }[];
+}
+
+export interface HardwareInfo {
+  cpu: { name: string; baseMhz: number; cores: number; logical: number; sockets: number; l2Kb: number; l3Kb: number; virtualization: boolean | null };
+  mem: { speedMhz: number; slotsUsed: number; slotsTotal: number; form: string };
+  disks: { index: number; model: string; media: string; bus: string; size: number }[];
+  nets: { key: string; description: string; alias: string; ipv4: string; wireless: boolean; physical: boolean }[];
+  gpus: { luid: string; name: string; dedicatedTotal: number; sharedTotal: number }[];
+}
+
+export interface ProcGroup {
+  name: string;
+  count: number;
+  /** Percent of the whole machine. */
+  cpu: number;
+  memory: number;
+  path: string | null;
+}
+
+export interface FileDetails {
+  icon: string | null;
+  description: string | null;
+  company: string | null;
+  target: string | null;
+}
+
 export interface VDisk {
   path: string;
   size: number;
@@ -272,6 +333,13 @@ export const api = {
   onDupesProgress: (h: (p: DupeProgress) => void) => on("dupes-progress", h),
   onDupesDone: (h: (g: DupeGroup[]) => void) => on("dupes-done", h),
   revealPath: (path: string) => call<void>("reveal_path", { path }),
+  listStartup: () => call<StartupItem[]>("list_startup"),
+  setStartupEnabled: (id: string, enabled: boolean) => call<void>("set_startup_enabled", { id, enabled }),
+  perfSample: () => call<PerfSample>("perf_sample"),
+  perfProcesses: () => call<ProcGroup[]>("perf_processes"),
+  perfHardware: () => call<HardwareInfo>("perf_hardware"),
+  fileDetails: (paths: string[]) => call<Record<string, FileDetails>>("file_details", { paths }),
+  endProcess: (name: string) => call<number>("end_process", { name }),
   listApps: () => call<AppInfo[]>("list_apps"),
   uninstallApp: (id: string) => call<void>("uninstall_app", { id }),
   stopUninstallWait: (id: string) => call<void>("stop_uninstall_wait", { id }),

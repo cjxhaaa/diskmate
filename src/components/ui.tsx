@@ -60,3 +60,67 @@ export function UsageBar({ used, total, thick }: { used: number; total: number; 
     </div>
   );
 }
+
+function hue(s: string): number {
+  let h = 0;
+  for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 360;
+  return h;
+}
+
+/** A program's icon, or its initial on a colored tile when there is none. */
+export function ProgramIcon({ src, name, size = 36 }: { src: string | null | undefined; name: string; size?: number }) {
+  if (src) {
+    return <img src={src} width={size} height={size} style={{ borderRadius: 8, objectFit: "contain", flex: "none" }} alt="" />;
+  }
+  const h = hue(name);
+  return (
+    <div
+      style={{
+        width: size,
+        height: size,
+        borderRadius: Math.round(size * 0.28),
+        flex: "none",
+        display: "grid",
+        placeItems: "center",
+        fontWeight: 700,
+        fontSize: Math.round(size * 0.42),
+        color: "white",
+        background: `linear-gradient(135deg, hsl(${h} 70% 60%), hsl(${(h + 40) % 360} 70% 48%))`,
+      }}
+    >
+      {[...name][0]?.toUpperCase()}
+    </div>
+  );
+}
+
+export function Switch({
+  on,
+  busy,
+  disabled,
+  label,
+  onChange,
+}: {
+  on: boolean;
+  busy?: boolean;
+  disabled?: boolean;
+  label: string;
+  onChange: (on: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+      title={label}
+      className={`switch ${on ? "on" : ""} ${busy ? "busy" : ""}`}
+      disabled={disabled || busy}
+      onClick={(e) => {
+        e.stopPropagation();
+        onChange(!on);
+      }}
+    >
+      <span className="switch-knob">{busy && <span className="spinner" />}</span>
+    </button>
+  );
+}

@@ -2,10 +2,13 @@ mod apps;
 mod clean;
 mod downloads;
 mod dupes;
+mod filemeta;
 mod history;
 mod migrate;
+mod perf;
 mod rules;
 mod scan;
+mod startup;
 mod sys;
 mod util;
 mod vdisk;
@@ -31,6 +34,10 @@ struct AppState {
     dupes_running: Mutex<Option<Arc<dupes::DupeCtx>>>,
     /// The last duplicate search, which `delete_duplicates` checks every request against.
     dupes: Mutex<Vec<dupes::DupeGroup>>,
+    /// Live counters for the performance page, opened on first use.
+    perf: Mutex<Option<perf::Monitor>>,
+    procs: Mutex<Option<perf::ProcMonitor>>,
+    hardware: Mutex<Option<perf::HardwareInfo>>,
 }
 
 /// `%LOCALAPPDATA%\com.cjxhaaa.diskmate`: past scans, the record of moved folders.
@@ -652,6 +659,73 @@ async fn clean_app_leftovers(
 }
 
 #[tauri::command]
+async fn list_startup() -> Result<Vec<startup::StartupItem>, String> {
+    tauri::async_runtime::spawn_blocking(startup::list)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn set_startup_enabled(id: String, enabled: bool) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || startup::set_enabled(&id, enabled))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn perf_sample(state: State<AppState>) -> Result<perf::Sample, String> {
+    let mut m = state.perf.lock().unwrap();
+    if m.is_none() {
+        *m = perf::Monitor::new();
+    }
+    m.as_mut()
+        .map(|m| m.sample())
+        .ok_or_else(|| "读不到性能计数器".into())
+}
+
+#[tauri::command]
+async fn perf_processes(app: AppHandle) -> Result<Vec<perf::ProcGroup>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let mut m = state.procs.lock().unwrap();
+        if m.is_none() {
+            *m = perf::ProcMonitor::new();
+        }
+        m.as_mut()
+            .map(|m| m.sample())
+            .ok_or_else(|| "读不到进程信息".to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn perf_hardware(app: AppHandle) -> Result<perf::HardwareInfo, String> {
+    if let Some(hw) = app.state::<AppState>().hardware.lock().unwrap().clone() {
+        return Ok(hw);
+    }
+    let hw = tauri::async_runtime::spawn_blocking(perf::hardware)
+        .await
+        .map_err(|e| e.to_string())?;
+    *app.state::<AppState>().hardware.lock().unwrap() = Some(hw.clone());
+    Ok(hw)
+}
+
+#[tauri::command]
+async fn file_details(
+    paths: Vec<String>,
+) -> Result<HashMap<String, filemeta::FileDetails>, String> {
+    tauri::async_runtime::spawn_blocking(move || filemeta::details(&paths))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn end_process(name: String) -> Result<u32, String> {
+    perf::end_group(&name)
+}
+
+#[tauri::command]
 fn reveal_path(path: String) -> Result<(), String> {
     sys::reveal(&PathBuf::from(path))
 }
@@ -686,6 +760,13 @@ pub fn run() {
             uninstall_app,
             stop_uninstall_wait,
             clean_app_leftovers,
+            list_startup,
+            set_startup_enabled,
+            perf_sample,
+            perf_processes,
+            perf_hardware,
+            file_details,
+            end_process,
             reveal_path
         ])
         .run(tauri::generate_context!())

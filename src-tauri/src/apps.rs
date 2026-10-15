@@ -362,7 +362,7 @@ pub fn powershell(script: &str) -> Option<String> {
     Some(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-fn base64_encode(bytes: &[u8]) -> String {
+pub(crate) fn base64_encode(bytes: &[u8]) -> String {
     const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut s = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
@@ -402,11 +402,15 @@ struct AppxRow {
 }
 
 /// `Microsoft.WindowsCalculator` → `Windows Calculator`.
-fn pretty_package_name(name: &str) -> String {
+pub(crate) fn pretty_package_name(name: &str) -> String {
     let base = name.rsplit('.').next().unwrap_or(name);
     let mut out = String::new();
-    for (i, c) in base.chars().enumerate() {
-        if i > 0 && c.is_uppercase() && !out.ends_with(' ') {
+    let mut prev_lower = false;
+    for c in base.chars() {
+        // A space before each new word, but "PCManager" stays "PCManager", not "P C Manager".
+        let starts_word = c.is_uppercase() && prev_lower;
+        prev_lower = c.is_lowercase() || c.is_ascii_digit();
+        if starts_word && !out.ends_with(' ') {
             out.push(' ');
         }
         out.push(c);
@@ -491,7 +495,7 @@ Get-AppxPackage | Where-Object { -not $_.IsFramework -and -not $_.NonRemovable -
 }
 
 /// A package logo is declared as `Assets\StoreLogo.png` but shipped as `StoreLogo.scale-100.png`.
-fn find_logo(location: &Path, logo: &str) -> Option<PathBuf> {
+pub(crate) fn find_logo(location: &Path, logo: &str) -> Option<PathBuf> {
     let declared = location.join(logo);
     if declared.is_file() {
         return Some(declared);
