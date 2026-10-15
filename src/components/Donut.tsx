@@ -31,11 +31,22 @@ export function Donut({ slices, size = 220, thickness = 30, active, onHover, cen
 
   return (
     <div style={{ position: "relative", width: size, height: size }}>
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ transform: "rotate(-90deg)" }}>
+      {/* Leaving clears the highlight only when the pointer leaves the whole ring: per-slice leave
+          events fired across every gap between slices and blinked the highlight off and on. */}
+      <svg
+        width={size}
+        height={size}
+        viewBox={`0 0 ${size} ${size}`}
+        style={{ transform: "rotate(-90deg)" }}
+        onMouseLeave={() => onHover?.(null)}
+      >
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--bg-soft)" strokeWidth={thickness} />
         {slices.map((s) => {
           const len = (s.value / total) * c;
           const dash = Math.max(len - gap, 0.5);
+          // Highlighting never changes a slice's geometry. It used to widen the hovered slice, and
+          // a slice that grows under the pointer moves the edge the pointer is on — part of what
+          // made the chart shake.
           const el = (
             <circle
               key={s.key}
@@ -44,16 +55,15 @@ export function Donut({ slices, size = 220, thickness = 30, active, onHover, cen
               r={r}
               fill="none"
               stroke={s.color}
-              strokeWidth={active === s.key ? thickness + 8 : thickness}
+              strokeWidth={thickness}
               strokeDasharray={`${grown ? dash : 0} ${c}`}
               strokeDashoffset={-offset}
               style={{
-                transition: "stroke-dasharray 0.9s cubic-bezier(0.2,0.8,0.2,1), stroke-width 0.15s, opacity 0.15s",
-                opacity: active && active !== s.key ? 0.35 : 1,
+                transition: "stroke-dasharray 0.9s cubic-bezier(0.2,0.8,0.2,1), opacity 0.15s",
+                opacity: active && active !== s.key ? 0.3 : 1,
                 cursor: "pointer",
               }}
               onMouseEnter={() => onHover?.(s.key)}
-              onMouseLeave={() => onHover?.(null)}
             />
           );
           offset += len;

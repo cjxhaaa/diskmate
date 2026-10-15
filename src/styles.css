@@ -205,6 +205,9 @@ button {
 .page {
   flex: 1;
   overflow-y: auto;
+  /* Room for the scrollbar is kept even when there is none, so content appearing or disappearing
+     never shifts the page sideways. */
+  scrollbar-gutter: stable;
   padding: 28px 32px 32px;
   animation: page-in 0.28s ease;
 }
@@ -590,6 +593,15 @@ button {
 }
 .hint-box strong {
   color: var(--text);
+}
+.hint-stack {
+  display: grid;
+}
+.hint-layer {
+  grid-area: 1 / 1;
+}
+.hint-layer.hidden {
+  visibility: hidden;
 }
 
 .release-card {

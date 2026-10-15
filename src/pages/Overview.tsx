@@ -62,14 +62,9 @@ function Breakdown({ summary }: { summary: ScanSummary }) {
             </div>
           }
         />
-        <div className="legend">
+        <div className="legend" onMouseLeave={() => setActive(null)}>
           {summary.categories.map((c) => (
-            <div
-              key={c.id}
-              className={`legend-row ${active === c.id ? "active" : ""}`}
-              onMouseEnter={() => setActive(c.id)}
-              onMouseLeave={() => setActive(null)}
-            >
+            <div key={c.id} className={`legend-row ${active === c.id ? "active" : ""}`} onMouseEnter={() => setActive(c.id)}>
               <span className="legend-dot" style={{ background: CATEGORIES[c.id].color }} />
               <span className="legend-label">{CATEGORIES[c.id].label}</span>
               <span className="legend-size num">{formatBytes(c.bytes)}</span>
@@ -78,18 +73,21 @@ function Breakdown({ summary }: { summary: ScanSummary }) {
           ))}
         </div>
       </div>
-      <div className="hint-box">
-        {activeCat ? (
-          <>
-            <strong>{CATEGORIES[activeCat.id].label}</strong>：{CATEGORIES[activeCat.id].hint}
-          </>
-        ) : (
-          <>
-            占用最多的是 <strong>{top3.map((c) => `${CATEGORIES[c.id].label}（${formatBytes(c.bytes)}）`).join("、")}</strong>。
-            把鼠标移到图例上可以看每一类是什么。扫描了 {formatCount(summary.files)} 个文件，用时 {formatDuration(summary.elapsedMs)}
-            {summary.deniedDirs > 0 && `，${formatCount(summary.deniedDirs)} 个文件夹没有权限读取`}。
-          </>
-        )}
+      {/* Every text this box can show is laid out at once in the same cell and all but one hidden,
+          so the box is always as tall as the longest. Swapping a single text in and out changed its
+          height on every hover, which moved the page and with it the ring under the pointer — the
+          shaking. */}
+      <div className="hint-box hint-stack">
+        <div className={active ? "hint-layer hidden" : "hint-layer"}>
+          占用最多的是 <strong>{top3.map((c) => `${CATEGORIES[c.id].label}（${formatBytes(c.bytes)}）`).join("、")}</strong>。
+          把鼠标移到图例上可以看每一类是什么。扫描了 {formatCount(summary.files)} 个文件，用时 {formatDuration(summary.elapsedMs)}
+          {summary.deniedDirs > 0 && `，${formatCount(summary.deniedDirs)} 个文件夹没有权限读取`}。
+        </div>
+        {summary.categories.map((c) => (
+          <div key={c.id} className={active === c.id ? "hint-layer" : "hint-layer hidden"}>
+            <strong>{CATEGORIES[c.id].label}</strong>：{CATEGORIES[c.id].hint}
+          </div>
+        ))}
       </div>
     </div>
   );
