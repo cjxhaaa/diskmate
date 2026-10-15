@@ -3,10 +3,12 @@ mod clean;
 mod downloads;
 mod dupes;
 mod history;
+mod migrate;
 mod rules;
 mod scan;
 mod sys;
 mod util;
+mod vdisk;
 
 use serde::Serialize;
 use std::collections::HashMap;
@@ -31,12 +33,131 @@ struct AppState {
     dupes: Mutex<Vec<dupes::DupeGroup>>,
 }
 
-/// Where past scans are kept: `%LOCALAPPDATA%\com.cjxhaaa.diskmate\history`.
-fn history_dir(app: &AppHandle) -> PathBuf {
+/// `%LOCALAPPDATA%\com.cjxhaaa.diskmate`: past scans, the record of moved folders.
+fn data_dir(app: &AppHandle) -> PathBuf {
     app.path()
         .app_local_data_dir()
         .unwrap_or_else(|_| util::local_appdata().join("DiskMate"))
-        .join("history")
+}
+
+fn history_dir(app: &AppHandle) -> PathBuf {
+    data_dir(app).join("history")
+}
+
+#[tauri::command]
+async fn migration_candidates(app: AppHandle) -> Result<Vec<migrate::Candidate>, String> {
+    let dir = data_dir(&app);
+    tauri::async_runtime::spawn_blocking(move || migrate::candidates(&dir))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct MoveDone {
+    id: String,
+    ok: bool,
+    error: Option<String>,
+}
+
+/// Moves (or with `restore`, brings back) one candidate. Long-running: progress arrives as
+/// `migrate-progress`, the end as `migrate-done`.
+#[tauri::command]
+fn migrate_folder(
+    app: AppHandle,
+    id: String,
+    drive_root: Option<String>,
+    restore: bool,
+) -> Result<(), String> {
+    let dir = data_dir(&app);
+    std::thread::spawn(move || {
+        let report = |phase: &'static str, done: u64, total: u64| {
+            let _ = app.emit(
+                "migrate-progress",
+                migrate::MoveProgress {
+                    id: id.clone(),
+                    phase,
+                    done,
+                    total,
+                },
+            );
+        };
+        let result = if restore {
+            migrate::restore(&dir, &id, &report)
+        } else {
+            match (migrate::source_for(&id), drive_root.as_deref()) {
+                (Some(source), Some(drive)) => {
+                    migrate::migrate(&dir, &id, &source, drive, &report).map(|_| ())
+                }
+                (None, _) => Err("找不到这个文件夹".into()),
+                (_, None) => Err("没有选择目标磁盘".into()),
+            }
+        };
+        let _ = app.emit(
+            "migrate-done",
+            MoveDone {
+                id,
+                ok: result.is_ok(),
+                error: result.err(),
+            },
+        );
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn list_vdisks(state: State<AppState>) -> Vec<vdisk::VDisk> {
+    let large: Vec<String> = state
+        .scans
+        .lock()
+        .unwrap()
+        .values()
+        .flat_map(|d| d.large.iter().map(|f| f.path.clone()))
+        .collect();
+    vdisk::list(&large)
+}
+
+#[tauri::command]
+async fn shutdown_wsl() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(vdisk::shutdown_wsl)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Compacted {
+    before: u64,
+    after: u64,
+}
+
+/// Compacts a disk that `list_vdisks` reported; any other path is refused.
+#[tauri::command]
+async fn compact_vdisk(state: State<'_, AppState>, path: String) -> Result<Compacted, String> {
+    let large: Vec<String> = state
+        .scans
+        .lock()
+        .unwrap()
+        .values()
+        .flat_map(|d| d.large.iter().map(|f| f.path.clone()))
+        .collect();
+    tauri::async_runtime::spawn_blocking(move || {
+        let disk = vdisk::list(&large)
+            .into_iter()
+            .find(|d| d.path.eq_ignore_ascii_case(&path))
+            .ok_or("不是已知的虚拟磁盘")?;
+        // A WSL disk first has its free blocks trimmed from inside, then WSL is stopped so the disk
+        // is released. Both are part of compacting it; neither is optional.
+        if let Some(distro) = vdisk::distro_of(&disk.owner) {
+            vdisk::trim_wsl(distro)?;
+            vdisk::shutdown_wsl()?;
+            std::thread::sleep(Duration::from_secs(3));
+        }
+        vdisk::compact(std::path::Path::new(&path))
+            .map(|(before, after)| Compacted { before, after })
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -546,6 +667,11 @@ pub fn run() {
             find_duplicates,
             cancel_duplicates,
             delete_duplicates,
+            migration_candidates,
+            migrate_folder,
+            list_vdisks,
+            shutdown_wsl,
+            compact_vdisk,
             list_apps,
             uninstall_app,
             stop_uninstall_wait,

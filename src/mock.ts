@@ -326,6 +326,41 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
       return undefined as T;
     case "cancel_duplicates":
       return undefined as T;
+    case "migration_candidates": {
+      await sleep(700);
+      const c = (id: string, title: string, desc: string, path: string, size: number, method: string, blockers: string[] = [], movedTo: string | null = null) => ({
+        id, title, desc, path, size: size * GB, method, blockers, movedTo,
+      });
+      return [
+        c(String.raw`folder:c:\users\40501\slime`, "slime", "用户目录下的文件夹，通常是代码项目。搬走后原路径照常可用；IDE、终端里打开着的话要先关掉。", String.raw`C:\Users\40501\slime`, 30.95, "junction"),
+        c("wechat", "微信聊天文件", "微信 4.x 的聊天图片、视频和文件。搬走后微信照常读写，但搬之前必须退出微信。", String.raw`C:\Users\40501\xwechat_files`, 15.01, "junction", ["微信"]),
+        c("qqmusic", "QQ 音乐", "下载的歌曲和缓存。搬之前要退出 QQ 音乐。", String.raw`C:\Users\40501\AppData\Roaming\Tencent\QQMusic`, 10.76, "junction"),
+        c("android-sdk", "Android SDK", "SDK、模拟器系统镜像和构建工具。项目里写的 SDK 路径不用改。", String.raw`C:\Users\40501\AppData\Local\Android\Sdk`, 8.64, "junction", ["adb"]),
+        c("downloads", "下载", "Windows 会把「下载」文件夹指向新位置，浏览器下载的文件以后也直接存到那里。", String.raw`C:\Users\40501\Downloads`, 3.18, "knownFolder"),
+        c("gradle", "Gradle 缓存", "所有 Android / Java 项目下载过的依赖。", String.raw`C:\Users\40501\.gradle`, 5.46, "junction", [], String.raw`D:\Users\40501\.gradle`),
+      ] as T;
+    }
+    case "migrate_folder": {
+      const id = String(args?.id);
+      void (async () => {
+        for (const [phase, frac] of [["copy", 0.2], ["copy", 0.6], ["copy", 1], ["verify", 1], ["switch", 1], ["cleanup", 1]] as const) {
+          await sleep(500);
+          emit("migrate-progress", { id, phase, done: frac * 10 * GB, total: 10 * GB });
+        }
+        emit("migrate-done", { id, ok: true, error: null });
+      })();
+      return undefined as T;
+    }
+    case "list_vdisks":
+      return [
+        { path: String.raw`D:\WSL\Ubuntu\ext4.vhdx`, size: 330 * GB, owner: "WSL · Ubuntu", kind: "wsl", inUse: true },
+        { path: String.raw`C:\Users\40501\AppData\Roaming\Claude\vm_bundles\claudevm.bundle\rootfs.vhdx`, size: 7.82 * GB, owner: "Claude 桌面应用", kind: "claude", inUse: false },
+      ] as T;
+    case "shutdown_wsl":
+      return undefined as T;
+    case "compact_vdisk":
+      await sleep(1500);
+      return { before: 330 * GB, after: 214 * GB } as T;
     case "reveal_path":
       return undefined as T;
   }

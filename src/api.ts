@@ -183,6 +183,38 @@ export interface DupeProgress {
   toHashBytes: number;
 }
 
+export interface MoveCandidate {
+  id: string;
+  title: string;
+  desc: string;
+  path: string;
+  size: number;
+  method: "junction" | "knownFolder";
+  blockers: string[];
+  movedTo: string | null;
+}
+
+export interface MoveProgress {
+  id: string;
+  phase: "copy" | "verify" | "switch" | "cleanup";
+  done: number;
+  total: number;
+}
+
+export interface MoveDone {
+  id: string;
+  ok: boolean;
+  error: string | null;
+}
+
+export interface VDisk {
+  path: string;
+  size: number;
+  owner: string;
+  kind: "wsl" | "docker" | "claude" | "other";
+  inUse: boolean;
+}
+
 export type CategoryId =
   | "system"
   | "programs"
@@ -226,6 +258,13 @@ export const api = {
   findDuplicates: (minSize: number) => call<void>("find_duplicates", { minSize }),
   cancelDuplicates: () => call<void>("cancel_duplicates"),
   deleteDuplicates: (paths: string[], permanent: boolean) => call<Outcome>("delete_duplicates", { paths, permanent }),
+  migrationCandidates: () => call<MoveCandidate[]>("migration_candidates"),
+  migrateFolder: (id: string, driveRoot: string | null, restore: boolean) => call<void>("migrate_folder", { id, driveRoot, restore }),
+  onMigrateProgress: (h: (p: MoveProgress) => void) => on("migrate-progress", h),
+  onMigrateDone: (h: (d: MoveDone) => void) => on("migrate-done", h),
+  listVdisks: () => call<VDisk[]>("list_vdisks"),
+  shutdownWsl: () => call<void>("shutdown_wsl"),
+  compactVdisk: (path: string) => call<{ before: number; after: number }>("compact_vdisk", { path }),
   onDupesProgress: (h: (p: DupeProgress) => void) => on("dupes-progress", h),
   onDupesDone: (h: (g: DupeGroup[]) => void) => on("dupes-done", h),
   revealPath: (path: string) => call<void>("reveal_path", { path }),

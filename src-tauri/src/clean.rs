@@ -74,6 +74,13 @@ pub fn allowed(path: &Path) -> bool {
         .any(|r| p.starts_with(&format!(r"{r}\")) || (p == *r && r != &home))
 }
 
+/// Deletes `dir` and everything in it, without the [`allowed`] check. Only for a folder whose
+/// contents were just verified to exist elsewhere (a completed move); every user-picked delete goes
+/// through [`execute`] instead.
+pub fn remove_tree_pub(dir: &Path) -> Outcome {
+    remove_tree(dir, None, true)
+}
+
 /// Deletes everything under `dir`. Files newer than `cutoff` and files that are in use stay, and
 /// so does every folder that still holds one. `remove_self` also removes `dir` once it is empty.
 fn remove_tree(dir: &Path, cutoff: Option<SystemTime>, remove_self: bool) -> Outcome {

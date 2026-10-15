@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AppWindow, FolderSearch, HardDrive, LayoutDashboard, LayoutGrid, Sparkles, TrendingUp } from "lucide-react";
+import { AppWindow, FolderSearch, HardDrive, LayoutDashboard, LayoutGrid, Sparkles, TrendingUp, Truck } from "lucide-react";
 import { Toasts, UsageBar } from "./components/ui";
 import { formatBytes } from "./format";
 import { Apps } from "./pages/Apps";
@@ -7,16 +7,18 @@ import { Cleanup } from "./pages/Cleanup";
 import { Explorer } from "./pages/Explorer";
 import { Changes } from "./pages/Changes";
 import { Files } from "./pages/Files";
+import { Move } from "./pages/Move";
 import { Overview } from "./pages/Overview";
 import { StoreProvider, useStore } from "./store";
 
-type Page = "overview" | "cleanup" | "apps" | "files" | "explorer" | "changes";
+type Page = "overview" | "cleanup" | "apps" | "files" | "move" | "explorer" | "changes";
 
 const NAV: { id: Page; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "overview", label: "概览", icon: LayoutDashboard },
   { id: "cleanup", label: "智能清理", icon: Sparkles },
   { id: "apps", label: "应用管理", icon: AppWindow },
   { id: "files", label: "文件整理", icon: FolderSearch },
+  { id: "move", label: "搬家与压缩", icon: Truck },
   { id: "explorer", label: "空间分析", icon: LayoutGrid },
   { id: "changes", label: "空间变化", icon: TrendingUp },
 ];
@@ -69,6 +71,7 @@ function Shell() {
         {page === "apps" && <Apps />}
         {page === "explorer" && <Explorer />}
         {page === "files" && <Files />}
+        {page === "move" && <Move />}
         {page === "changes" && <Changes />}
       </main>
       <Toasts />
