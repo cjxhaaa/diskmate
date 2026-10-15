@@ -17,15 +17,17 @@ function crumbsOf(root: string, path: string): { label: string; path: string }[]
 }
 
 export function Explorer() {
-  const { scan, startScan } = useStore();
-  const root = scan.status === "done" ? scan.summary.root : null;
+  const { current, scanning, root: driveRoot, startScan } = useStore();
+  const root = current?.root ?? null;
+  const scanningHere = scanning?.root.toUpperCase() === driveRoot.toUpperCase();
   const [path, setPath] = useState<string | null>(null);
   const [nodes, setNodes] = useState<NodeView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // A new scan (or another drive) starts the map over from the top.
   useEffect(() => {
-    if (root) setPath(root);
-  }, [root]);
+    setPath(root);
+  }, [root, current?.scannedAt]);
 
   useEffect(() => {
     if (!path) return;
@@ -50,15 +52,15 @@ export function Explorer() {
           <div className="empty-icon">
             <ScanSearch size={30} />
           </div>
-          {scan.status === "scanning" ? (
+          {scanningHere ? (
             <div>
-              正在扫描，已经看过 {formatCount(scan.progress?.files ?? 0)} 个文件…
+              正在扫描，已经看过 {formatCount(scanning?.progress?.files ?? 0)} 个文件…
               <div className="faint" style={{ fontSize: 13, marginTop: 4 }}>扫描完成后这里会显示空间地图</div>
             </div>
           ) : (
             <>
-              <div>需要先扫描一次磁盘</div>
-              <button className="btn btn-primary" onClick={() => startScan()}>
+              <div>需要先扫描一次 {driveRoot.replace("\\", "")}</div>
+              <button className="btn btn-primary" disabled={!!scanning} onClick={() => startScan()}>
                 开始扫描
               </button>
             </>

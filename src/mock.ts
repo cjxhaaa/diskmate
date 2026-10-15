@@ -154,6 +154,7 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
           deniedDirs: 214,
           elapsedMs: 74_000,
           cancelled: false,
+          scannedAt: Math.floor(Date.now() / 1000),
           categories,
         });
       })();
@@ -161,6 +162,8 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
     }
     case "cancel_scan":
       return undefined as T;
+    case "scan_summaries":
+      return [] as T;
     case "get_children":
       await sleep(60);
       return children(String(args?.path)) as T;

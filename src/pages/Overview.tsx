@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ArrowRight, CodeXml, Globe, HardDrive, MessageCircle, Monitor, RefreshCw, ScanSearch, Sparkles, Square, TriangleAlert } from "lucide-react";
 import type { CleanItem, ScanSummary } from "../api";
 import { CATEGORIES } from "../categories";
@@ -176,16 +176,16 @@ function HeroAction({ onGoClean }: { onGoClean: () => void }) {
 }
 
 function Scanning() {
-  const { scan, cancelScan } = useStore();
-  if (scan.status !== "scanning") return null;
-  const p = scan.progress;
+  const { scanning, cancelScan } = useStore();
+  if (!scanning) return null;
+  const p = scanning.progress;
   return (
     <div className="card card-pad scan-state">
       <div className="pulse-ring">
         <ScanSearch size={26} />
       </div>
       <div style={{ minWidth: 0 }}>
-        <div style={{ fontWeight: 650, fontSize: 16 }}>正在扫描 {scan.root}</div>
+        <div style={{ fontWeight: 650, fontSize: 16 }}>正在扫描 {scanning.root}</div>
         <div className="muted num" style={{ margin: "2px 0 6px" }}>
           已扫描 {formatCount(p?.files ?? 0)} 个文件 · {formatBytes(p?.bytes ?? 0)} · {formatCount(p?.dirs ?? 0)} 个文件夹
         </div>
@@ -198,12 +198,31 @@ function Scanning() {
   );
 }
 
+/** "刚刚" / "12 分钟前" / "今天 09:41" / "10-14 16:02". */
+function scannedAgo(unixSecs: number): string {
+  const d = new Date(unixSecs * 1000);
+  const mins = Math.floor((Date.now() - d.getTime()) / 60000);
+  if (mins < 1) return "刚刚";
+  if (mins < 60) return `${mins} 分钟前`;
+  const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  if (new Date().toDateString() === d.toDateString()) return `今天 ${hm}`;
+  return `${d.getMonth() + 1}-${d.getDate()} ${hm}`;
+}
+
 export function Overview({ onGoClean }: { onGoClean: () => void }) {
-  const { drives, root, setRoot, scan, startScan } = useStore();
+  const { drives, root, setRoot, current: summary, scanning, startScan } = useStore();
   const drive = drives.find((d) => d.root === root);
-  const summary = scan.status === "done" && scan.summary.root.toUpperCase() === root.toUpperCase() ? scan.summary : null;
+  const scanningHere = scanning?.root.toUpperCase() === root.toUpperCase();
+  const scanningElsewhere = !!scanning && !scanningHere;
   const used = drive ? drive.total - drive.free : 0;
   const pctUsed = drive ? used / drive.total : 0;
+  const driveName = root.replace("\\", "");
+  // Re-render every half minute so "N 分钟前" keeps up.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 30_000);
+    return () => clearInterval(t);
+  }, []);
 
   const tip = useMemo(() => {
     if (!drive) return null;
@@ -223,23 +242,23 @@ export function Overview({ onGoClean }: { onGoClean: () => void }) {
           {drives.length > 1 && (
             <div className="drive-tabs">
               {drives.map((d) => (
-                <button
-                  key={d.root}
-                  className={`drive-tab ${d.root === root ? "active" : ""}`}
-                  onClick={() => {
-                    setRoot(d.root);
-                    startScan(d.root);
-                  }}
-                >
+                <button key={d.root} className={`drive-tab ${d.root === root ? "active" : ""}`} onClick={() => setRoot(d.root)}>
                   <HardDrive size={15} />
                   {d.root.replace("\\", "")} {d.label}
                 </button>
               ))}
             </div>
           )}
-          <button className="btn" disabled={scan.status === "scanning"} onClick={() => startScan()}>
-            <RefreshCw size={15} /> 重新扫描
-          </button>
+          {summary && !scanningHere && (
+            <span className="faint" style={{ fontSize: 12.5 }} title="扫描结果会一直保留，需要时再手动重新扫描">
+              扫描于 {scannedAgo(summary.scannedAt)}
+            </span>
+          )}
+          {summary && (
+            <button className="btn" disabled={!!scanning} title={scanningElsewhere ? `正在扫描 ${scanning?.root}，完成后再试` : undefined} onClick={() => startScan()}>
+              <RefreshCw size={15} /> 重新扫描
+            </button>
+          )}
         </div>
       </div>
 
@@ -261,28 +280,33 @@ export function Overview({ onGoClean }: { onGoClean: () => void }) {
         </div>
       )}
 
-      {scan.status === "scanning" && <Scanning />}
+      {scanningHere && <Scanning />}
 
-      {summary && (
+      {summary && !scanningHere && (
         <div className="grid-2">
           <Breakdown summary={summary} />
           <ReleaseCard onGoClean={onGoClean} />
         </div>
       )}
 
-      {scan.status === "idle" && (
+      {!summary && !scanningHere && (
         <div className="card empty">
           <div className="empty-icon">
             <ScanSearch size={30} />
           </div>
-          <div>扫描整个磁盘，看看空间都用在哪里</div>
-          <button className="btn btn-primary btn-lg" onClick={() => startScan()}>
-            开始扫描
+          <div>
+            还没有扫描 {driveName}，扫描后可以看到空间都用在哪里
+            <div className="faint" style={{ fontSize: 13, marginTop: 4 }}>
+              {scanningElsewhere ? `正在扫描 ${scanning?.root}，完成后才能开始下一个` : "整盘扫描通常需要一到三分钟"}
+            </div>
+          </div>
+          <button className="btn btn-primary btn-lg" disabled={scanningElsewhere} onClick={() => startScan()}>
+            扫描 {driveName}
           </button>
         </div>
       )}
 
-      {scan.status === "done" && scan.summary.cancelled && (
+      {summary?.cancelled && !scanningHere && (
         <div className="muted" style={{ marginTop: 12, fontSize: 13 }}>
           扫描被中途停止，以上数字不完整。
         </div>

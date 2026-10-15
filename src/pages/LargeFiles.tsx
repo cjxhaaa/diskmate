@@ -45,16 +45,18 @@ function protectedReason(f: LargeFile): string | null {
 }
 
 export function LargeFiles() {
-  const { scan, toast, refreshDrives } = useStore();
+  const { current, toast, refreshDrives } = useStore();
   const [files, setFiles] = useState<LargeFile[] | null>(null);
   const [kind, setKind] = useState<Kind>("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [confirm, setConfirm] = useState(false);
-  const scanDone = scan.status === "done";
+  const scanDone = !!current;
 
   useEffect(() => {
-    if (scanDone) void api.largeFiles().then(setFiles);
-  }, [scanDone]);
+    setFiles(null);
+    setSelected(new Set());
+    if (current) void api.largeFiles(current.root).then(setFiles);
+  }, [current?.root, current?.scannedAt]);
 
   const shown = useMemo(() => (files ?? []).filter((f) => kind === "all" || kindOf(f.name) === kind), [files, kind]);
   const chosen = (files ?? []).filter((f) => selected.has(f.path));

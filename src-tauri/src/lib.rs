@@ -14,7 +14,9 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 #[derive(Default)]
 struct AppState {
-    scan: Mutex<Option<Arc<scan::ScanData>>>,
+    /// The last finished scan of each drive, keyed by its uppercased root (`C:\`). Kept per drive so
+    /// switching drives shows what was already found instead of scanning again.
+    scans: Mutex<HashMap<String, Arc<scan::ScanData>>>,
     scanning: Mutex<Option<Arc<scan::ScanCtx>>>,
     plans: Mutex<HashMap<String, rules::Planned>>,
 }
@@ -62,7 +64,11 @@ fn start_scan(app: AppHandle, state: State<AppState>, root: String) -> Result<()
         *scanning = None;
         drop(scanning);
         let summary = data.summary.clone();
-        *state.scan.lock().unwrap() = Some(Arc::new(data));
+        state
+            .scans
+            .lock()
+            .unwrap()
+            .insert(summary.root.to_uppercase(), Arc::new(data));
         let _ = app.emit("scan-done", summary);
     });
     Ok(())
@@ -75,19 +81,39 @@ fn cancel_scan(state: State<AppState>) {
     }
 }
 
+/// The stored scan of the drive `path` is on.
+fn scan_for(state: &AppState, path: &str) -> Option<Arc<scan::ScanData>> {
+    let upper = path.to_uppercase();
+    state
+        .scans
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(root, _)| upper.starts_with(root.as_str()))
+        .map(|(_, data)| data.clone())
+}
+
+/// Every drive scanned in this session, so the UI can show them without scanning again.
+#[tauri::command]
+fn scan_summaries(state: State<AppState>) -> Vec<scan::Summary> {
+    state
+        .scans
+        .lock()
+        .unwrap()
+        .values()
+        .map(|d| d.summary.clone())
+        .collect()
+}
+
 #[tauri::command]
 fn get_children(state: State<AppState>, path: String) -> Result<Vec<scan::NodeView>, String> {
-    let data = state.scan.lock().unwrap().clone().ok_or("还没有扫描结果")?;
+    let data = scan_for(&state, &path).ok_or("还没有扫描这个磁盘")?;
     scan::children(&data, &path).ok_or_else(|| format!("扫描结果里没有 {path}"))
 }
 
 #[tauri::command]
-fn large_files(state: State<AppState>) -> Vec<scan::LargeFile> {
-    state
-        .scan
-        .lock()
-        .unwrap()
-        .as_ref()
+fn large_files(state: State<AppState>, root: String) -> Vec<scan::LargeFile> {
+    scan_for(&state, &root)
         .map(|d| d.large.clone())
         .unwrap_or_default()
 }
@@ -208,6 +234,7 @@ pub fn run() {
             list_drives,
             start_scan,
             cancel_scan,
+            scan_summaries,
             get_children,
             large_files,
             analyze_cleanup,

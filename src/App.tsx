@@ -19,7 +19,7 @@ const NAV: { id: Page; label: string; icon: typeof LayoutDashboard }[] = [
 
 function Shell() {
   const [page, setPage] = useState<Page>("overview");
-  const { drives, root, analysis, scan } = useStore();
+  const { drives, root, analysis, scanning } = useStore();
   const drive = drives.find((d) => d.root === root);
   const safeBytes =
     analysis.status === "done" ? analysis.items.filter((i) => !i.guideOnly && i.risk === "safe").reduce((s, i) => s + i.size, 0) : 0;
@@ -41,7 +41,7 @@ function Shell() {
             <Icon size={18} />
             {label}
             {id === "cleanup" && safeBytes > 0 && <span className="nav-badge num">{formatBytes(safeBytes)}</span>}
-            {id === "overview" && scan.status === "scanning" && <span className="spinner" style={{ marginLeft: "auto", width: 14, height: 14, borderWidth: 2 }} />}
+            {id === "overview" && scanning && <span className="spinner" style={{ marginLeft: "auto", width: 14, height: 14, borderWidth: 2 }} />}
           </button>
         ))}
         {drive && (

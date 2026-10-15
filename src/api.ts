@@ -34,6 +34,7 @@ export interface ScanSummary {
   deniedDirs: number;
   elapsedMs: number;
   cancelled: boolean;
+  scannedAt: number;
   categories: CategoryStat[];
 }
 
@@ -135,7 +136,8 @@ export const api = {
   startScan: (root: string) => call<void>("start_scan", { root }),
   cancelScan: () => call<void>("cancel_scan"),
   getChildren: (path: string) => call<NodeView[]>("get_children", { path }),
-  largeFiles: () => call<LargeFile[]>("large_files"),
+  largeFiles: (root: string) => call<LargeFile[]>("large_files", { root }),
+  scanSummaries: () => call<ScanSummary[]>("scan_summaries"),
   analyzeCleanup: () => call<CleanItem[]>("analyze_cleanup"),
   runCleanup: (ids: string[]) => call<CleanResult[]>("run_cleanup", { ids }),
   recycleFiles: (paths: string[]) => call<Outcome>("recycle_files", { paths }),

@@ -166,6 +166,8 @@ pub struct Summary {
     pub denied_dirs: u64,
     pub elapsed_ms: u64,
     pub cancelled: bool,
+    /// When the scan finished, as Unix seconds.
+    pub scanned_at: u64,
     pub categories: Vec<CategoryStat>,
 }
 
@@ -201,6 +203,7 @@ pub fn run(root: &Path, ctx: &ScanCtx) -> ScanData {
         denied_dirs: count_denied(&tree),
         elapsed_ms: started.elapsed().as_millis() as u64,
         cancelled: ctx.cancel.load(Ordering::Relaxed),
+        scanned_at: unix_secs(std::time::SystemTime::now()),
         categories: totals.into_stats(),
     };
     ScanData {

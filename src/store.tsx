@@ -9,10 +9,12 @@ import {
   type ScanSummary,
 } from "./api";
 
-export type ScanState =
-  | { status: "idle" }
-  | { status: "scanning"; root: string; progress: ScanProgress | null; startedAt: number }
-  | { status: "done"; summary: ScanSummary };
+/** The scan running right now, if any. Only one runs at a time: each one reads the whole disk. */
+export interface Scanning {
+  root: string;
+  progress: ScanProgress | null;
+  startedAt: number;
+}
 
 export type AnalysisState =
   | { status: "idle" }
@@ -27,9 +29,14 @@ interface Toast {
 
 interface Store {
   drives: DriveInfo[];
+  /** The drive on screen. Choosing one never starts a scan by itself. */
   root: string;
   setRoot: (root: string) => void;
-  scan: ScanState;
+  /** Finished scans, one per drive, keyed by uppercased root. */
+  scans: Record<string, ScanSummary>;
+  /** The finished scan of the drive on screen. */
+  current: ScanSummary | null;
+  scanning: Scanning | null;
   startScan: (root?: string) => void;
   cancelScan: () => void;
   analysis: AnalysisState;
@@ -48,13 +55,17 @@ export function useStore(): Store {
   return s;
 }
 
+const key = (root: string) => root.toUpperCase();
+
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [drives, setDrives] = useState<DriveInfo[]>([]);
   const [root, setRoot] = useState("C:\\");
-  const [scan, setScan] = useState<ScanState>({ status: "idle" });
+  const [scans, setScans] = useState<Record<string, ScanSummary>>({});
+  const [scanning, setScanning] = useState<Scanning | null>(null);
   const [analysis, setAnalysis] = useState<AnalysisState>({ status: "idle" });
   const [toasts, setToasts] = useState<Toast[]>([]);
   const analysisStarted = useRef(false);
+  const startedOnce = useRef(false);
   const toastId = useRef(0);
 
   const toast = useCallback((text: string) => {
@@ -72,10 +83,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const startScan = useCallback(
     (target?: string) => {
       const r = target ?? root;
-      setScan({ status: "scanning", root: r, progress: null, startedAt: Date.now() });
+      setScanning({ root: r, progress: null, startedAt: Date.now() });
       api.startScan(r).catch((e) => {
         toast(`扫描失败：${e}`);
-        setScan({ status: "idle" });
+        setScanning(null);
       });
     },
     [root, toast],
@@ -106,9 +117,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // Events, wired once.
   useEffect(() => {
     const offs = [
-      api.onScanProgress((p) => setScan((s) => (s.status === "scanning" ? { ...s, progress: p } : s))),
+      api.onScanProgress((p) => setScanning((s) => (s ? { ...s, progress: p } : s))),
       api.onScanDone((summary) => {
-        setScan({ status: "done", summary });
+        setScans((all) => ({ ...all, [key(summary.root)]: summary }));
+        setScanning(null);
         void refreshDrives();
         if (!analysisStarted.current) analyze();
       }),
@@ -117,21 +129,41 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return () => offs.forEach((p) => p.then((off) => off()));
   }, [analyze, refreshDrives]);
 
-  // First launch: find the drives and start on the system one straight away.
+  // First launch: scan the system drive once, unless this window already has its scan (a reload).
+  // Every later scan is the user's call — a whole-disk read is not something to do behind their back.
   useEffect(() => {
-    void refreshDrives().then((list) => {
+    if (startedOnce.current) return;
+    startedOnce.current = true;
+    void Promise.all([refreshDrives(), api.scanSummaries()]).then(([list, done]) => {
       const sys = list.find((d) => d.isSystem) ?? list[0];
-      if (sys) {
-        setRoot(sys.root);
-        startScan(sys.root);
-      }
+      if (done.length) setScans(Object.fromEntries(done.map((s) => [key(s.root), s])));
+      if (!sys) return;
+      setRoot(sys.root);
+      if (!done.some((s) => key(s.root) === key(sys.root))) startScan(sys.root);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const current = scans[key(root)] ?? null;
+
   const value = useMemo<Store>(
-    () => ({ drives, root, setRoot, scan, startScan, cancelScan, analysis, analyze, cleanup, refreshDrives, toasts, toast }),
-    [drives, root, scan, startScan, cancelScan, analysis, analyze, cleanup, refreshDrives, toasts, toast],
+    () => ({
+      drives,
+      root,
+      setRoot,
+      scans,
+      current,
+      scanning,
+      startScan,
+      cancelScan,
+      analysis,
+      analyze,
+      cleanup,
+      refreshDrives,
+      toasts,
+      toast,
+    }),
+    [drives, root, scans, current, scanning, startScan, cancelScan, analysis, analyze, cleanup, refreshDrives, toasts, toast],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
