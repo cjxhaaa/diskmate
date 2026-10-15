@@ -10,6 +10,7 @@ mod rules;
 mod scan;
 mod startup;
 mod sys;
+mod tray;
 mod util;
 mod vdisk;
 
@@ -735,6 +736,30 @@ fn end_process(name: String) -> Result<u32, String> {
     perf::end_group(&name)
 }
 
+/// A page the window should open on, left by the tray when it had to build a new window.
+#[tauri::command]
+fn take_pending_page(state: State<tray::TrayState<tauri::Wry>>) -> Option<String> {
+    state.pending_page.lock().unwrap().take()
+}
+
+/// The answer to 「关闭窗口后」: keep running in the tray, or quit. Remembered.
+#[tauri::command]
+fn set_close_to_tray(
+    app: AppHandle,
+    state: State<tray::TrayState<tauri::Wry>>,
+    on: bool,
+) -> Result<(), String> {
+    state.set_close_to_tray(&data_dir(&app), on)
+}
+
+/// Closes the window the way the close button does, now that the user has chosen.
+#[tauri::command]
+fn close_main_window(app: AppHandle) {
+    if let Some(w) = app.get_webview_window(tray::MAIN) {
+        let _ = w.close();
+    }
+}
+
 #[tauri::command]
 fn reveal_path(path: String) -> Result<(), String> {
     sys::reveal(&PathBuf::from(path))
@@ -742,9 +767,10 @@ fn reveal_path(path: String) -> Result<(), String> {
 
 /// While minimized, asks WebView2 to keep as little memory as it can (it trims caches and
 /// working sets); back to normal when the window comes back.
+static WEBVIEW_LOW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 fn webview_memory_low(window: &tauri::WebviewWindow, low: bool) {
-    static LOW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    if LOW.swap(low, Ordering::Relaxed) == low {
+    if WEBVIEW_LOW.swap(low, Ordering::Relaxed) == low {
         return;
     }
     let _ = window.with_webview(move |wv| unsafe {
@@ -770,13 +796,44 @@ fn webview_memory_low(window: &tauri::WebviewWindow, low: bool) {
 pub fn run() {
     util::init_worker_pool();
     tauri::Builder::default()
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::Resized(_) = event {
+        // Launching DiskMate again (say, from the Start menu while it sits in the tray) brings
+        // back the running one instead of starting a second.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            tray::show_main(app, None);
+        }))
+        .setup(|app| {
+            let dir = data_dir(app.handle());
+            tray::setup(app.handle(), &dir)?;
+            Ok(())
+        })
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::Resized(_) => {
                 let minimized = window.is_minimized().unwrap_or(false);
                 if let Some(w) = window.app_handle().get_webview_window(window.label()) {
                     webview_memory_low(&w, minimized);
                 }
             }
+            tauri::WindowEvent::CloseRequested { api, .. } if window.label() == tray::MAIN => {
+                let app = window.app_handle();
+                let choice = app
+                    .state::<tray::TrayState<tauri::Wry>>()
+                    .settings
+                    .lock()
+                    .unwrap()
+                    .close_to_tray;
+                match choice {
+                    // Not asked yet: the page asks, then closes the window itself.
+                    None => {
+                        api.prevent_close();
+                        let _ = window.emit("close-asked", ());
+                    }
+                    Some(false) => app.exit(0),
+                    // The window (and its WebView2) goes; the app stays, see `prevent_exit`.
+                    Some(true) => {}
+                }
+            }
+            tauri::WindowEvent::Destroyed => WEBVIEW_LOW.store(false, Ordering::Relaxed),
+            _ => {}
         })
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
@@ -813,8 +870,26 @@ pub fn run() {
             file_details,
             end_process,
             perf_stop,
+            take_pending_page,
+            set_close_to_tray,
+            close_main_window,
             reveal_path
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running DiskMate");
+        .build(tauri::generate_context!())
+        .expect("error while running DiskMate")
+        .run(|app, event| {
+            // The last window closing asks to end the app; kept in the tray, it stays.
+            if let tauri::RunEvent::ExitRequested { code: None, api, .. } = event {
+                let keep = app
+                    .state::<tray::TrayState<tauri::Wry>>()
+                    .settings
+                    .lock()
+                    .unwrap()
+                    .close_to_tray
+                    == Some(true);
+                if keep {
+                    api.prevent_exit();
+                }
+            }
+        });
 }

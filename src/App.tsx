@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Activity, AppWindow, FolderSearch, HardDrive, LayoutDashboard, LayoutGrid, Power, Sparkles, TrendingUp, Truck } from "lucide-react";
-import { Toasts, UsageBar } from "./components/ui";
+import { api } from "./api";
+import { Dialog, Toasts, UsageBar } from "./components/ui";
 import { formatBytes } from "./format";
 import { Apps } from "./pages/Apps";
 import { Cleanup } from "./pages/Cleanup";
@@ -27,8 +28,54 @@ const NAV: { id: Page; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "perf", label: "性能", icon: Activity },
 ];
 
+const PAGES = new Set<string>(NAV.map((n) => n.id));
+
+/** Asked the first time the window is closed: stay in the tray, or quit. Remembered. */
+function CloseChoice({ onDone }: { onDone: () => void }) {
+  const choose = async (tray: boolean) => {
+    await api.setCloseToTray(tray);
+    onDone();
+    await api.closeMainWindow();
+  };
+  return (
+    <Dialog onClose={onDone}>
+      <div className="dialog-body">
+        <h2 className="dialog-title">关闭窗口后，DiskMate 要…</h2>
+        <div className="close-choices">
+          <button className="close-choice" onClick={() => void choose(true)}>
+            <b>保留在托盘</b>
+            <span className="muted">窗口关掉、释放界面占用的内存，任务栏右下角留一个小图标，点它就能打开。正在进行的扫描和搬家会继续。</span>
+          </button>
+          <button className="close-choice" onClick={() => void choose(false)}>
+            <b>直接退出</b>
+            <span className="muted">完全退出，不在后台运行。</span>
+          </button>
+        </div>
+        <div className="faint" style={{ fontSize: 12.5, marginTop: 10 }}>
+          只问这一次。以后可以在托盘图标的右键菜单里改（「关闭窗口时保留在托盘」）。
+        </div>
+      </div>
+      <div className="dialog-actions">
+        <button className="btn" onClick={onDone}>
+          取消
+        </button>
+      </div>
+    </Dialog>
+  );
+}
+
 function Shell() {
   const [page, setPage] = useState<Page>("overview");
+  const [askClose, setAskClose] = useState(false);
+
+  // The tray menu opens pages: through an event when the window is open, or as the page a
+  // freshly built window should start on.
+  useEffect(() => {
+    const go = (p: string | null) => p && PAGES.has(p) && setPage(p as Page);
+    void api.takePendingPage().then(go);
+    const offs = [api.onNavigate(go), api.onCloseAsked(() => setAskClose(true))];
+    return () => offs.forEach((p) => p.then((off) => off()));
+  }, []);
   const { drives, root, analysis, scanning } = useStore();
   const drive = drives.find((d) => d.root === root);
   const safeBytes =
@@ -81,6 +128,7 @@ function Shell() {
         {page === "perf" && <Perf />}
       </main>
       <Toasts />
+      {askClose && <CloseChoice onDone={() => setAskClose(false)} />}
     </div>
   );
 }
