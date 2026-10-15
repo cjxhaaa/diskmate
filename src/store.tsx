@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   api,
+  type AppInfo,
   type AnalyzeProgress,
   type CleanItem,
   type CleanResult,
@@ -45,6 +46,12 @@ interface Store {
   refreshDrives: () => Promise<DriveInfo[]>;
   toasts: Toast[];
   toast: (text: string) => void;
+  /** Installed apps; null until first loaded. Sizes fill in after the list arrives. */
+  apps: AppInfo[] | null;
+  appsLoading: boolean;
+  appIcons: Record<string, string>;
+  loadApps: () => void;
+  dropApp: (id: string) => void;
 }
 
 const Ctx = createContext<Store | null>(null);
@@ -64,6 +71,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [scanning, setScanning] = useState<Scanning | null>(null);
   const [analysis, setAnalysis] = useState<AnalysisState>({ status: "idle" });
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [apps, setApps] = useState<AppInfo[] | null>(null);
+  const [appsLoading, setAppsLoading] = useState(false);
+  const [appIcons, setAppIcons] = useState<Record<string, string>>({});
   const analysisStarted = useRef(false);
   const startedOnce = useRef(false);
   const toastId = useRef(0);
@@ -114,6 +124,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [refreshDrives],
   );
 
+  const loadApps = useCallback(() => {
+    setAppsLoading(true);
+    api
+      .listApps()
+      .then(setApps)
+      .catch((e) => toast(`读取应用列表失败：${e}`))
+      .finally(() => setAppsLoading(false));
+  }, [toast]);
+
+  const dropApp = useCallback((id: string) => setApps((list) => list?.filter((a) => a.id !== id) ?? null), []);
+
   // Events, wired once.
   useEffect(() => {
     const offs = [
@@ -125,6 +146,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (!analysisStarted.current) analyze();
       }),
       api.onAnalyzeProgress((p) => setAnalysis((a) => (a.status === "loading" ? { ...a, progress: p } : a))),
+      api.onAppMeasured((m) =>
+        setApps((list) => list?.map((a) => (a.id === m.id ? { ...a, ...m, measured: true } : a)) ?? null),
+      ),
+      api.onAppIcons((icons) => setAppIcons((old) => ({ ...old, ...icons }))),
     ];
     return () => offs.forEach((p) => p.then((off) => off()));
   }, [analyze, refreshDrives]);
@@ -162,8 +187,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       refreshDrives,
       toasts,
       toast,
+      apps,
+      appsLoading,
+      appIcons,
+      loadApps,
+      dropApp,
     }),
-    [drives, root, scans, current, scanning, startScan, cancelScan, analysis, analyze, cleanup, refreshDrives, toasts, toast],
+    [drives, root, scans, current, scanning, startScan, cancelScan, analysis, analyze, cleanup, refreshDrives, toasts, toast, apps, appsLoading, appIcons, loadApps, dropApp],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

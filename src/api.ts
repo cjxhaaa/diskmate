@@ -104,6 +104,40 @@ export interface CleanProgress {
   total: number;
 }
 
+export type AppTag = "runtime" | "driver" | "dev" | "store" | "user";
+
+export interface AppInfo {
+  id: string;
+  name: string;
+  version: string;
+  publisher: string;
+  kind: "win32" | "store";
+  installDate: string | null;
+  installLocation: string | null;
+  estimatedSize: number;
+  installSize: number | null;
+  dataSize: number | null;
+  dataDirs: Detail[];
+  lastUsed: number | null;
+  tags: AppTag[];
+  measured: boolean;
+}
+
+export interface AppMeasured {
+  id: string;
+  installSize: number | null;
+  dataSize: number;
+  dataDirs: Detail[];
+  lastUsed: number | null;
+}
+
+export interface UninstallResult {
+  id: string;
+  removed: boolean;
+  error: string | null;
+  leftovers: Detail[];
+}
+
 export type CategoryId =
   | "system"
   | "programs"
@@ -142,6 +176,13 @@ export const api = {
   runCleanup: (ids: string[]) => call<CleanResult[]>("run_cleanup", { ids }),
   recycleFiles: (paths: string[]) => call<Outcome>("recycle_files", { paths }),
   revealPath: (path: string) => call<void>("reveal_path", { path }),
+  listApps: () => call<AppInfo[]>("list_apps"),
+  uninstallApp: (id: string) => call<void>("uninstall_app", { id }),
+  stopUninstallWait: (id: string) => call<void>("stop_uninstall_wait", { id }),
+  cleanAppLeftovers: (id: string, paths: string[]) => call<Outcome>("clean_app_leftovers", { id, paths }),
+  onAppMeasured: (h: (m: AppMeasured) => void) => on("app-measured", h),
+  onAppIcons: (h: (icons: Record<string, string>) => void) => on("app-icons", h),
+  onAppUninstall: (h: (r: UninstallResult) => void) => on("app-uninstall", h),
   onScanProgress: (h: (p: ScanProgress) => void) => on("scan-progress", h),
   onScanDone: (h: (s: ScanSummary) => void) => on("scan-done", h),
   onAnalyzeProgress: (h: (p: AnalyzeProgress) => void) => on("analyze-progress", h),

@@ -1,3 +1,4 @@
+mod apps;
 mod clean;
 mod rules;
 mod scan;
@@ -19,6 +20,9 @@ struct AppState {
     scans: Mutex<HashMap<String, Arc<scan::ScanData>>>,
     scanning: Mutex<Option<Arc<scan::ScanCtx>>>,
     plans: Mutex<HashMap<String, rules::Planned>>,
+    apps: Mutex<HashMap<String, apps::AppEntry>>,
+    /// Uninstalls being waited on; setting the flag stops waiting and checks once more.
+    uninstall_waits: Mutex<HashMap<String, Arc<std::sync::atomic::AtomicBool>>>,
 }
 
 #[tauri::command]
@@ -221,6 +225,161 @@ async fn recycle_files(paths: Vec<String>) -> Result<clean::Outcome, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Every installed app, sizes not yet known. Sizes follow one app at a time as `app-measured`,
+/// icons all at once as `app-icons`.
+#[tauri::command]
+async fn list_apps(app: AppHandle) -> Result<Vec<apps::AppInfo>, String> {
+    let entries = tauri::async_runtime::spawn_blocking(apps::list)
+        .await
+        .map_err(|e| e.to_string())?;
+    let infos: Vec<apps::AppInfo> = entries.iter().map(|e| e.info.clone()).collect();
+    {
+        let state = app.state::<AppState>();
+        *state.apps.lock().unwrap() = entries
+            .iter()
+            .map(|e| (e.info.id.clone(), e.clone()))
+            .collect();
+    }
+    {
+        let (app, entries) = (app.clone(), entries.clone());
+        std::thread::spawn(move || {
+            use rayon::prelude::*;
+            // Biggest registered size first, so the rows most worth looking at fill in first.
+            let mut order = entries;
+            order.sort_by_key(|e| std::cmp::Reverse(e.info.estimated_size));
+            order.par_iter().for_each(|entry| {
+                let m = apps::measure_app(entry);
+                let state = app.state::<AppState>();
+                if let Some(stored) = state.apps.lock().unwrap().get_mut(&m.id) {
+                    stored.info.install_size = m.install_size;
+                    stored.info.data_size = Some(m.data_size);
+                    stored.info.data_dirs = m.data_dirs.clone();
+                    stored.info.last_used = m.last_used;
+                    stored.info.measured = true;
+                }
+                let _ = app.emit("app-measured", m);
+            });
+        });
+    }
+    std::thread::spawn(move || {
+        let icons = apps::icons(&entries);
+        let _ = app.emit("app-icons", icons);
+    });
+    Ok(infos)
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct UninstallResult {
+    id: String,
+    removed: bool,
+    error: Option<String>,
+    leftovers: Vec<rules::Detail>,
+}
+
+/// Runs the app's own uninstaller, then waits (up to ten minutes) for its registry entry to go.
+/// Many uninstallers relaunch themselves from a temp copy and exit at once, so the uninstaller
+/// exiting says little; the entry disappearing is what "uninstalled" means. The result, with any
+/// leftovers, arrives as `app-uninstall`.
+#[tauri::command]
+fn uninstall_app(app: AppHandle, state: State<AppState>, id: String) -> Result<(), String> {
+    let entry = state
+        .apps
+        .lock()
+        .unwrap()
+        .get(&id)
+        .cloned()
+        .ok_or("找不到这个应用，请刷新列表")?;
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    state
+        .uninstall_waits
+        .lock()
+        .unwrap()
+        .insert(id.clone(), stop.clone());
+    std::thread::spawn(move || {
+        let launched = apps::run_uninstaller(&entry);
+        let deadline = std::time::Instant::now() + Duration::from_secs(600);
+        let mut removed = !apps::still_installed(&entry.source);
+        while !removed && !stop.load(Ordering::Relaxed) && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_secs(2));
+            removed = !apps::still_installed(&entry.source);
+        }
+        let leftovers = if removed {
+            apps::leftovers(&entry)
+        } else {
+            Vec::new()
+        };
+        app.state::<AppState>()
+            .uninstall_waits
+            .lock()
+            .unwrap()
+            .remove(&id);
+        let _ = app.emit(
+            "app-uninstall",
+            UninstallResult {
+                id,
+                removed,
+                error: launched.err(),
+                leftovers,
+            },
+        );
+    });
+    Ok(())
+}
+
+/// The user says the uninstaller is closed: stop waiting and report what is there now.
+#[tauri::command]
+fn stop_uninstall_wait(state: State<AppState>, id: String) {
+    if let Some(flag) = state.uninstall_waits.lock().unwrap().get(&id) {
+        flag.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Deletes leftovers of an uninstalled app. Only folders this app was found to own are accepted,
+/// and each still goes through the same whitelist as every other delete.
+#[tauri::command]
+async fn clean_app_leftovers(
+    app: AppHandle,
+    id: String,
+    paths: Vec<String>,
+) -> Result<clean::Outcome, String> {
+    let entry = app
+        .state::<AppState>()
+        .apps
+        .lock()
+        .unwrap()
+        .get(&id)
+        .cloned()
+        .ok_or("找不到这个应用")?;
+    let owned: Vec<String> = entry
+        .info
+        .data_dirs
+        .iter()
+        .map(|d| d.path.to_lowercase())
+        .chain(entry.info.install_location.iter().map(|l| l.to_lowercase()))
+        .collect();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut out = clean::Outcome::default();
+        for p in paths {
+            if !owned.contains(&p.to_lowercase()) {
+                continue;
+            }
+            let o = clean::execute(&rules::Target::Dir {
+                path: PathBuf::from(&p),
+            });
+            out.freed += o.freed;
+            out.removed_files += o.removed_files;
+            out.skipped_files += o.skipped_files;
+            if out.error.is_none() {
+                out.error = o.error;
+            }
+        }
+        out
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn reveal_path(path: String) -> Result<(), String> {
     sys::reveal(&PathBuf::from(path))
@@ -240,6 +399,10 @@ pub fn run() {
             analyze_cleanup,
             run_cleanup,
             recycle_files,
+            list_apps,
+            uninstall_app,
+            stop_uninstall_wait,
+            clean_app_leftovers,
             reveal_path
         ])
         .run(tauri::generate_context!())

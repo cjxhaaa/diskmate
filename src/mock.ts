@@ -125,7 +125,71 @@ const items = [
   details: (i.details as [string, string, number][]).map(([label, path, size]) => ({ label, path, size })),
 }));
 
+const DAY = 86_400;
+const now = () => Math.floor(Date.now() / 1000);
+const apps = [
+  ["微信", "Tencent", "4.1.2", [], 0.85, 29.3, 0, "2025-03-02", [["聊天文件", "C:\\Users\\40501\\xwechat_files", 15], ["聊天文件", "C:\\Users\\40501\\Documents\\WeChat Files", 10.8]]],
+  ["Claude", "Anthropic", "1.2.0", ["store"], 0.68, 20.5, 0, null, [["应用数据", "C:\\Users\\40501\\AppData\\Local\\Packages\\Claude_pzs8sxrjxfjjc", 10.6]]],
+  ["Android Studio", "Google LLC", "2025.3.3", ["dev"], 3.06, 17.9, 2, "2025-11-20", [["Android SDK", "C:\\Users\\40501\\AppData\\Local\\Android\\Sdk", 12]]],
+  ["QQ音乐", "Tencent", "21.3", [], 0.2, 10.8, 41, "2024-06-11", [["下载与缓存", "C:\\Users\\40501\\AppData\\Roaming\\Tencent\\QQMusic", 10.8]]],
+  ["CLion 2024.1.4", "JetBrains s.r.o.", "241.18034", ["dev"], 4.47, 4.65, 430, "2024-07-01", [["Local 数据", "C:\\Users\\40501\\AppData\\Local\\JetBrains\\CLion2024.1", 4.2]]],
+  ["夸克", "Quark", "6.2", ["user"], 4.52, 0.08, 128, "2025-01-15", []],
+  ["GoLand 2024.1.4", "JetBrains s.r.o.", "241.18034", ["dev"], 2.21, 1.97, 455, "2024-07-01", []],
+  ["Microsoft Visual C++ 2015-2022 Redistributable (x64)", "Microsoft Corporation", "14.40", ["runtime"], 0.03, 0, null, "2024-05-20", []],
+  ["NVIDIA 图形驱动程序 560.94", "NVIDIA Corporation", "560.94", ["driver"], 1.1, 0, null, "2025-02-10", []],
+  ["斗鱼直播", "Douyu", "5.6", [], 0.37, 0.55, 410, "2024-03-02", []],
+  ["Microsoft Teams", "Microsoft", "25.1", ["store"], 0.35, 0.93, 445, null, []],
+  ["Visual Studio Code", "Microsoft Corporation", "1.105", ["dev", "user"], 4.25, 1.59, 0, "2024-04-02", []],
+] as const;
+
+const appList = apps.map(([name, publisher, version, tags, inst, data, ago, date, dirs], i) => ({
+  id: `mock-${i}`,
+  name,
+  version,
+  publisher,
+  kind: (tags as readonly string[]).includes("store") ? "store" : "win32",
+  installDate: date,
+  installLocation: `C:\\Program Files\\${name}`,
+  estimatedSize: inst * GB,
+  installSize: null as number | null,
+  dataSize: null as number | null,
+  dataDirs: (dirs as readonly (readonly [string, string, number])[]).map(([label, path, size]) => ({ label, path, size: size * GB })),
+  lastUsed: ago === null ? null : now() - (ago as number) * DAY,
+  tags: [...tags],
+  measured: false,
+  _inst: inst * GB,
+  _data: data * GB,
+}));
+
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  if (cmd === "list_apps") {
+    await sleep(500);
+    void (async () => {
+      for (const a of appList) {
+        await sleep(120);
+        emit("app-measured", { id: a.id, installSize: a._inst, dataSize: a._data, dataDirs: a.dataDirs, lastUsed: a.lastUsed });
+      }
+    })();
+    return appList.map(({ _inst, _data, ...rest }) => rest) as T;
+  }
+  if (cmd === "uninstall_app") {
+    const id = String(args?.id);
+    void (async () => {
+      await sleep(3000);
+      emit("app-uninstall", {
+        id,
+        removed: true,
+        error: null,
+        leftovers: [
+          { label: "Roaming 数据", path: "C:\\Users\\40501\\AppData\\Roaming\\Example", size: 0.6 * GB },
+          { label: "安装目录", path: "C:\\Program Files\\Example", size: 0.05 * GB },
+        ],
+      });
+    })();
+    return undefined as T;
+  }
+  if (cmd === "stop_uninstall_wait") return undefined as T;
+  if (cmd === "clean_app_leftovers") return { freed: 0.6 * GB, removedFiles: 120, skippedFiles: 0, error: null } as T;
   switch (cmd) {
     case "list_drives":
       return [

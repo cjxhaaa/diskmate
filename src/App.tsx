@@ -1,18 +1,20 @@
 import { useState } from "react";
-import { Files, HardDrive, LayoutDashboard, LayoutGrid, Sparkles } from "lucide-react";
+import { AppWindow, Files, HardDrive, LayoutDashboard, LayoutGrid, Sparkles } from "lucide-react";
 import { Toasts, UsageBar } from "./components/ui";
 import { formatBytes } from "./format";
+import { Apps } from "./pages/Apps";
 import { Cleanup } from "./pages/Cleanup";
 import { Explorer } from "./pages/Explorer";
 import { LargeFiles } from "./pages/LargeFiles";
 import { Overview } from "./pages/Overview";
 import { StoreProvider, useStore } from "./store";
 
-type Page = "overview" | "cleanup" | "explorer" | "large";
+type Page = "overview" | "cleanup" | "apps" | "explorer" | "large";
 
 const NAV: { id: Page; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "overview", label: "概览", icon: LayoutDashboard },
   { id: "cleanup", label: "智能清理", icon: Sparkles },
+  { id: "apps", label: "应用管理", icon: AppWindow },
   { id: "explorer", label: "空间分析", icon: LayoutGrid },
   { id: "large", label: "大文件", icon: Files },
 ];
@@ -62,6 +64,7 @@ function Shell() {
       <main className="main">
         {page === "overview" && <Overview onGoClean={() => setPage("cleanup")} />}
         {page === "cleanup" && <Cleanup />}
+        {page === "apps" && <Apps />}
         {page === "explorer" && <Explorer />}
         {page === "large" && <LargeFiles />}
       </main>
