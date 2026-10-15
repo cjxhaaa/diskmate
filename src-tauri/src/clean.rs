@@ -258,25 +258,48 @@ pub fn execute(target: &Target) -> Outcome {
     }
 }
 
-/// Moves files to the Recycle Bin (the large-files page). Each must be inside the user folder.
-pub fn recycle(paths: &[PathBuf]) -> Outcome {
+/// Deletes files and folders the user picked by hand (large files, Downloads, duplicates): to the
+/// Recycle Bin, or for good with `permanent`. Each must be inside the user folder.
+pub fn remove_user_paths(paths: &[PathBuf], permanent: bool) -> Outcome {
     let mut out = Outcome::default();
     for p in paths {
-        // Same rule as the large-files page: app data (AppData) and tool data (.android, .gradle, ...)
-        // are left to the app that owns them — one file pulled out of either breaks that app.
+        // App data (AppData) and tool data (.android, .gradle, ...) are left to the app that owns
+        // them — one file pulled out of either breaks that app.
+        // Chat apps keep received files outside AppData; deleting one breaks it in the chat history.
         let inside_app_data = p.components().any(|c| {
             let name = c.as_os_str().to_string_lossy();
-            name.starts_with('.') || name.eq_ignore_ascii_case("appdata")
+            name.starts_with('.')
+                || name.eq_ignore_ascii_case("appdata")
+                || name.eq_ignore_ascii_case("xwechat_files")
+                || name.eq_ignore_ascii_case("WeChat Files")
+                || name.eq_ignore_ascii_case("Tencent Files")
         });
-        if !allowed(p) || !p.is_file() || inside_app_data {
+        if !allowed(p) || !p.exists() || inside_app_data {
             out.skipped_files += 1;
             continue;
         }
-        let len = util::file_len(p).unwrap_or(0);
+        if permanent {
+            let target = if p.is_dir() {
+                Target::Dir { path: p.clone() }
+            } else {
+                Target::File { path: p.clone() }
+            };
+            let o = execute(&target);
+            out.merge(o);
+            continue;
+        }
+        let size = if p.is_dir() {
+            util::measure(p, None)
+        } else {
+            util::Size {
+                bytes: util::file_len(p).unwrap_or(0),
+                files: 1,
+            }
+        };
         match trash::delete(p) {
             Ok(()) => {
-                out.freed += len;
-                out.removed_files += 1;
+                out.freed += size.bytes;
+                out.removed_files += size.files;
             }
             Err(e) => {
                 out.skipped_files += 1;

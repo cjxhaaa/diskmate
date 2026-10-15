@@ -1,5 +1,8 @@
 mod apps;
 mod clean;
+mod downloads;
+mod dupes;
+mod history;
 mod rules;
 mod scan;
 mod sys;
@@ -23,6 +26,17 @@ struct AppState {
     apps: Mutex<HashMap<String, apps::AppEntry>>,
     /// Uninstalls being waited on; setting the flag stops waiting and checks once more.
     uninstall_waits: Mutex<HashMap<String, Arc<std::sync::atomic::AtomicBool>>>,
+    dupes_running: Mutex<Option<Arc<dupes::DupeCtx>>>,
+    /// The last duplicate search, which `delete_duplicates` checks every request against.
+    dupes: Mutex<Vec<dupes::DupeGroup>>,
+}
+
+/// Where past scans are kept: `%LOCALAPPDATA%\com.cjxhaaa.diskmate\history`.
+fn history_dir(app: &AppHandle) -> PathBuf {
+    app.path()
+        .app_local_data_dir()
+        .unwrap_or_else(|_| util::local_appdata().join("DiskMate"))
+        .join("history")
 }
 
 #[tauri::command]
@@ -68,6 +82,7 @@ fn start_scan(app: AppHandle, state: State<AppState>, root: String) -> Result<()
         *scanning = None;
         drop(scanning);
         let summary = data.summary.clone();
+        let _ = history::save(&history_dir(&app), &data);
         state
             .scans
             .lock()
@@ -217,12 +232,138 @@ async fn run_cleanup(app: AppHandle, ids: Vec<String>) -> Result<Vec<CleanResult
     .map_err(|e| e.to_string())
 }
 
+/// Files or folders picked by hand (large files, Downloads): to the Recycle Bin, or for good.
 #[tauri::command]
-async fn recycle_files(paths: Vec<String>) -> Result<clean::Outcome, String> {
+async fn delete_files(paths: Vec<String>, permanent: bool) -> Result<clean::Outcome, String> {
     let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
-    tauri::async_runtime::spawn_blocking(move || clean::recycle(&paths))
+    tauri::async_runtime::spawn_blocking(move || clean::remove_user_paths(&paths, permanent))
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Every saved scan of `root`, oldest first.
+#[tauri::command]
+fn scan_history(app: AppHandle, root: String) -> Vec<scan::Summary> {
+    history::list(&history_dir(&app), &root)
+}
+
+#[tauri::command]
+fn scan_diff(
+    app: AppHandle,
+    root: String,
+    base_at: u64,
+    current_at: u64,
+) -> Result<history::Diff, String> {
+    history::diff(&history_dir(&app), &root, base_at, current_at)
+}
+
+#[tauri::command]
+async fn analyze_downloads(app: AppHandle) -> Result<Vec<downloads::DownloadItem>, String> {
+    let known: Vec<String> = app
+        .state::<AppState>()
+        .apps
+        .lock()
+        .unwrap()
+        .values()
+        .map(|e| e.info.name.clone())
+        .collect();
+    tauri::async_runtime::spawn_blocking(move || {
+        // The app list is reused when the apps page has loaded it; otherwise read it here.
+        let installed = if known.is_empty() {
+            apps::list().into_iter().map(|e| e.info.name).collect()
+        } else {
+            known
+        };
+        downloads::analyze(&installed)
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Starts looking for duplicates of at least `min_size` bytes. Progress arrives as
+/// `dupes-progress`, the groups as `dupes-done`.
+#[tauri::command]
+fn find_duplicates(app: AppHandle, state: State<AppState>, min_size: u64) {
+    let ctx = Arc::new(dupes::DupeCtx::default());
+    if let Some(previous) = state.dupes_running.lock().unwrap().replace(ctx.clone()) {
+        previous.cancel.store(true, Ordering::Relaxed);
+    }
+    let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    {
+        let (app, ctx, done) = (app.clone(), ctx.clone(), done.clone());
+        std::thread::spawn(move || {
+            while !done.load(Ordering::Relaxed) {
+                let _ = app.emit("dupes-progress", ctx.progress());
+                std::thread::sleep(Duration::from_millis(150));
+            }
+        });
+    }
+    std::thread::spawn(move || {
+        let groups = dupes::find(min_size, &ctx);
+        done.store(true, Ordering::Relaxed);
+        let state = app.state::<AppState>();
+        let mut running = state.dupes_running.lock().unwrap();
+        if !running
+            .as_ref()
+            .map(|c| Arc::ptr_eq(c, &ctx))
+            .unwrap_or(false)
+        {
+            return;
+        }
+        *running = None;
+        drop(running);
+        *state.dupes.lock().unwrap() = groups.clone();
+        let _ = app.emit("dupes-done", groups);
+    });
+}
+
+#[tauri::command]
+fn cancel_duplicates(state: State<AppState>) {
+    if let Some(ctx) = state.dupes_running.lock().unwrap().as_ref() {
+        ctx.cancel.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Deletes copies from the last duplicate search. Refused outright if any group would be left with
+/// no copy at all, or if a path is not one of the duplicates found.
+#[tauri::command]
+async fn delete_duplicates(
+    app: AppHandle,
+    paths: Vec<String>,
+    permanent: bool,
+) -> Result<clean::Outcome, String> {
+    let groups = app.state::<AppState>().dupes.lock().unwrap().clone();
+    let picked: std::collections::HashSet<String> =
+        paths.iter().map(|p| p.to_lowercase()).collect();
+    let known: std::collections::HashSet<String> = groups
+        .iter()
+        .flat_map(|g| g.files.iter().map(|f| f.path.to_lowercase()))
+        .collect();
+    if let Some(stray) = picked.iter().find(|p| !known.contains(*p)) {
+        return Err(format!("{stray} 不在重复文件结果里"));
+    }
+    if let Some(g) = groups.iter().find(|g| {
+        g.files
+            .iter()
+            .all(|f| picked.contains(&f.path.to_lowercase()))
+    }) {
+        return Err(format!("「{}」的所有副本都被选中了，至少要留一份", g.name));
+    }
+    let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+    let out =
+        tauri::async_runtime::spawn_blocking(move || clean::remove_user_paths(&paths, permanent))
+            .await
+            .map_err(|e| e.to_string())?;
+    // Forget what is gone, so a second request cannot pick the last remaining copy.
+    let state = app.state::<AppState>();
+    let mut stored = state.dupes.lock().unwrap();
+    for g in stored.iter_mut() {
+        g.files.retain(|f| {
+            !picked.contains(&f.path.to_lowercase()) || std::path::Path::new(&f.path).exists()
+        });
+    }
+    stored.retain(|g| g.files.len() > 1);
+    Ok(out)
 }
 
 /// Every installed app, sizes not yet known. Sizes follow one app at a time as `app-measured`,
@@ -398,7 +539,13 @@ pub fn run() {
             large_files,
             analyze_cleanup,
             run_cleanup,
-            recycle_files,
+            delete_files,
+            scan_history,
+            scan_diff,
+            analyze_downloads,
+            find_duplicates,
+            cancel_duplicates,
+            delete_duplicates,
             list_apps,
             uninstall_app,
             stop_uninstall_wait,

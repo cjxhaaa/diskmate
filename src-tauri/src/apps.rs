@@ -640,7 +640,7 @@ const GENERIC: &[&str] = &[
 ];
 
 /// "JetBrains CLion 2024.1 (x64)" → "JetBrains CLion".
-fn core_name(name: &str) -> String {
+pub fn core_name(name: &str) -> String {
     let mut s = name.to_string();
     if let Some(i) = s.find(['(', '（']) {
         s.truncate(i);

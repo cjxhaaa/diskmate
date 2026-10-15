@@ -18,7 +18,8 @@ function crumbsOf(root: string, path: string): { label: string; path: string }[]
 
 export function Explorer() {
   const { current, scanning, root: driveRoot, startScan } = useStore();
-  const root = current?.root ?? null;
+  // A result read back from history has totals but no folder tree to map.
+  const root = current && !current.fromHistory ? current.root : null;
   const scanningHere = scanning?.root.toUpperCase() === driveRoot.toUpperCase();
   const [path, setPath] = useState<string | null>(null);
   const [nodes, setNodes] = useState<NodeView[] | null>(null);
@@ -59,7 +60,9 @@ export function Explorer() {
             </div>
           ) : (
             <>
-              <div>需要先扫描一次 {driveRoot.replace("\\", "")}</div>
+              <div>
+                {current?.fromHistory ? "概览里的数字来自上次扫描，查看空间地图需要重新扫描一次" : `需要先扫描一次 ${driveRoot.replace("\\", "")}`}
+              </div>
               <button className="btn btn-primary" disabled={!!scanning} onClick={() => startScan()}>
                 开始扫描
               </button>

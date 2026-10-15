@@ -1209,3 +1209,124 @@ button {
   color: var(--text-2);
   padding: 2px 0 8px;
 }
+
+/* ---------------------------------------------------------------- files & changes */
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--bg-soft);
+}
+.tab {
+  border: 0;
+  background: transparent;
+  padding: 7px 14px;
+  border-radius: 9px;
+  cursor: pointer;
+  color: var(--text-2);
+  font-weight: 550;
+}
+.tab.active {
+  background: var(--bg-elev);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+}
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.file-row {
+  display: grid;
+  grid-template-columns: auto 32px minmax(0, 1fr) 96px 88px 32px;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  cursor: pointer;
+}
+.file-row:first-child {
+  border-top: 0;
+}
+.file-row:hover {
+  background: var(--bg-soft);
+}
+.file-row.picked {
+  background: color-mix(in srgb, var(--accent-soft) 60%, transparent);
+}
+.perm-toggle {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-top: 14px;
+  cursor: pointer;
+  font-size: 13.5px;
+}
+.dupe-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.dupe-summary > span {
+  flex: 1;
+}
+.dupe-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 14px;
+  align-items: center;
+  padding: 12px 16px 8px;
+}
+.dupe-file {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) 84px 44px 32px;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 16px;
+  cursor: pointer;
+}
+.dupe-file:last-child {
+  padding-bottom: 12px;
+}
+.dupe-file:hover {
+  background: var(--bg-soft);
+}
+.dupe-file.picked .detail-path {
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--review) 60%, transparent);
+}
+.change-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 160px 92px 32px;
+  gap: 14px;
+  align-items: center;
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
+}
+.change-row:first-of-type {
+  border-top: 0;
+}
+.diff-hero {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 24px;
+  align-items: center;
+}
+.diff-cats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 24px;
+}
+.diff-cat {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  font-size: 13.5px;
+}

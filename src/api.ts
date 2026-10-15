@@ -138,6 +138,51 @@ export interface UninstallResult {
   leftovers: Detail[];
 }
 
+export interface FolderChange {
+  path: string;
+  before: number | null;
+  after: number | null;
+  delta: number;
+}
+
+export interface ScanDiff {
+  baseAt: number;
+  currentAt: number;
+  usedDelta: number;
+  categories: { id: CategoryId; before: number; after: number; delta: number }[];
+  grew: FolderChange[];
+  shrank: FolderChange[];
+}
+
+export type DownloadKind = "installer" | "archive" | "image" | "video" | "document" | "folder" | "other";
+export type DownloadGroup = "installed" | "extracted" | "stale" | "other";
+
+export interface DownloadItem {
+  path: string;
+  name: string;
+  size: number;
+  modified: number;
+  isDir: boolean;
+  kind: DownloadKind;
+  group: DownloadGroup;
+  reason: string | null;
+}
+
+export interface DupeGroup {
+  id: string;
+  name: string;
+  size: number;
+  files: { path: string; modified: number }[];
+  wasted: number;
+}
+
+export interface DupeProgress {
+  phase: "walk" | "compare";
+  files: number;
+  hashedBytes: number;
+  toHashBytes: number;
+}
+
 export type CategoryId =
   | "system"
   | "programs"
@@ -174,7 +219,15 @@ export const api = {
   scanSummaries: () => call<ScanSummary[]>("scan_summaries"),
   analyzeCleanup: () => call<CleanItem[]>("analyze_cleanup"),
   runCleanup: (ids: string[]) => call<CleanResult[]>("run_cleanup", { ids }),
-  recycleFiles: (paths: string[]) => call<Outcome>("recycle_files", { paths }),
+  deleteFiles: (paths: string[], permanent: boolean) => call<Outcome>("delete_files", { paths, permanent }),
+  scanHistory: (root: string) => call<ScanSummary[]>("scan_history", { root }),
+  scanDiff: (root: string, baseAt: number, currentAt: number) => call<ScanDiff>("scan_diff", { root, baseAt, currentAt }),
+  analyzeDownloads: () => call<DownloadItem[]>("analyze_downloads"),
+  findDuplicates: (minSize: number) => call<void>("find_duplicates", { minSize }),
+  cancelDuplicates: () => call<void>("cancel_duplicates"),
+  deleteDuplicates: (paths: string[], permanent: boolean) => call<Outcome>("delete_duplicates", { paths, permanent }),
+  onDupesProgress: (h: (p: DupeProgress) => void) => on("dupes-progress", h),
+  onDupesDone: (h: (g: DupeGroup[]) => void) => on("dupes-done", h),
   revealPath: (path: string) => call<void>("reveal_path", { path }),
   listApps: () => call<AppInfo[]>("list_apps"),
   uninstallApp: (id: string) => call<void>("uninstall_app", { id }),

@@ -253,8 +253,79 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
       }
       return out as T;
     }
-    case "recycle_files":
-      return { freed: 1.3 * GB, removedFiles: 1, skippedFiles: 0, error: null } as T;
+    case "delete_files":
+    case "delete_duplicates":
+      await sleep(400);
+      return { freed: 1.3 * GB, removedFiles: 3, skippedFiles: 0, error: null } as T;
+    case "scan_history": {
+      const t = now();
+      return [
+        [14, 371], [10, 380], [7, 386], [4, 392], [2, 395], [0, 399],
+      ].map(([d, usedGb]) => ({
+        root: "C:\\", total, free: total - usedGb * GB, scanned: usedGb * GB, files: 1, dirs: 1, deniedDirs: 0,
+        elapsedMs: 1, cancelled: false, scannedAt: t - d * DAY - 3600, categories,
+      })) as T;
+    }
+    case "scan_diff":
+      await sleep(150);
+      return {
+        baseAt: args?.baseAt, currentAt: args?.currentAt, usedDelta: 7.2 * GB,
+        categories: [
+          { id: "personal", before: 30 * GB, after: 33 * GB, delta: 3 * GB },
+          { id: "dev", before: 46 * GB, after: 48 * GB, delta: 2.1 * GB },
+          { id: "appdata", before: 69.8 * GB, after: 71 * GB, delta: 1.2 * GB },
+          { id: "temp", before: 3.4 * GB, after: 3 * GB, delta: -0.4 * GB },
+        ],
+        grew: [
+          { path: "C:\\Users\\40501\\xwechat_files\\cjxh123_6e82\\msg\\video", before: 4.1 * GB, after: 6.2 * GB, delta: 2.1 * GB },
+          { path: "C:\\Users\\40501\\.gradle\\caches\\modules-2", before: 3.2 * GB, after: 4.4 * GB, delta: 1.2 * GB },
+          { path: "C:\\Users\\40501\\Downloads", before: 35.1 * GB, after: 36.3 * GB, delta: 1.2 * GB },
+          { path: "C:\\Users\\40501\\AppData\\Local\\Packages\\Claude_pzs8sxrjxfjjc", before: 9.9 * GB, after: 10.6 * GB, delta: 0.7 * GB },
+          { path: "C:\\Users\\40501\\chorus\\apps\\android\\app\\build", before: null, after: 0.4 * GB, delta: 0.4 * GB },
+        ],
+        shrank: [{ path: "C:\\Users\\40501\\AppData\\Local\\Temp", before: 2.5 * GB, after: 2.1 * GB, delta: -0.4 * GB }],
+      } as T;
+    case "analyze_downloads": {
+      await sleep(600);
+      const d = (name: string, size: number, group: string, kind: string, reason: string | null, daysAgo: number, isDir = false) => ({
+        path: `C:\\Users\\40501\\Downloads\\${name}`, name, size: size * GB, modified: now() - daysAgo * DAY, isDir, kind, group, reason,
+      });
+      return [
+        d("Fooocus_win64_2-5-0", 12.2, "stale", "folder", "468 天没动过", 468, true),
+        d("Win11_25H2_Chinese_Simplified_x64_v2.iso", 7.96, "stale", "image", "147 天没动过", 147),
+        d("ComfyUI_windows_portable_nvidia", 6.18, "stale", "folder", "468 天没动过", 468, true),
+        d("android-studio-panda3-patch1-windows.exe", 1.31, "installed", "installer", "已安装：Android Studio", 40),
+        d("skywork-desktop_1.0.1_x64_en-US.msi", 1.18, "installed", "installer", "已安装：skywork-desktop", 210),
+        d("Feishu-win32_x64-7.63.7-signed.exe", 0.34, "installed", "installer", "已安装：Feishu", 180),
+        d("Godot_v4.7-stable_win64.exe.zip", 0.08, "extracted", "archive", "已解压到「Godot_v4.7-stable_win64.exe」", 20),
+        d("PixelToPath-v1.0.0_Windows.zip", 0.04, "extracted", "archive", "已解压到「PixelToPath-v1.0.0_Windows」", 60),
+        d("NVIDIA_Broadcast_v2.2.1.58338310.exe", 0.18, "other", "installer", null, 30),
+        d("yt-dlp-gui.exe", 0.08, "other", "other", null, 12),
+      ] as T;
+    }
+    case "find_duplicates":
+      void (async () => {
+        for (let i = 1; i <= 10; i++) {
+          await sleep(120);
+          emit("dupes-progress", { phase: i < 5 ? "walk" : "compare", files: i * 500, hashedBytes: (i - 4) * 0.2 * GB, toHashBytes: 1.7 * GB });
+        }
+        const g = (name: string, size: number, paths: [string, number][]) => ({
+          id: paths[0][0], name, size: size * GB, wasted: size * GB * (paths.length - 1),
+          files: paths.map(([path, d]) => ({ path, modified: now() - d * DAY })),
+        });
+        emit("dupes-done", [
+          g("chrome.dll", 0.24, [["C:\\Users\\40501\\crawl_reddit\\chrome-win64\\chrome.dll", 420], ["C:\\Users\\40501\\Downloads\\chrome-win64\\chrome-win64\\chrome.dll", 421]]),
+          g("GMT20250320-030326_Recording_640x360.mp4", 0.04, [
+            ["C:\\Users\\40501\\Downloads\\GMT20250320-030326_Recording_640x360.mp4", 200],
+            ["C:\\Users\\40501\\Downloads\\GMT20250320-030326_Recording_640x360 (1).mp4", 199],
+            ["C:\\Users\\40501\\Downloads\\GMT20250320-030326_Recording_640x360 (2).mp4", 198],
+          ]),
+          g("e14a_f8df.wav", 0.02, [["C:\\Users\\40501\\Downloads\\e14a_f8df.wav", 240], ["C:\\Users\\40501\\xwechat_files\\cjxh123_6e82\\msg\\file\\2025-02\\e14a_f8df.wav", 241]]),
+        ]);
+      })();
+      return undefined as T;
+    case "cancel_duplicates":
+      return undefined as T;
     case "reveal_path":
       return undefined as T;
   }

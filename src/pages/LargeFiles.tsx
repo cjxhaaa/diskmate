@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Archive, Disc, Download, File, FileBox, Film, FolderOpen, Lock, Trash } from "lucide-react";
 import { api, type LargeFile } from "../api";
-import { Dialog } from "../components/ui";
+import { DeleteDialog } from "../components/DeleteDialog";
 import { formatBytes, formatDate } from "../format";
 import { useStore } from "../store";
 
@@ -44,39 +44,43 @@ function protectedReason(f: LargeFile): string | null {
   return null;
 }
 
-export function LargeFiles() {
-  const { current, toast, refreshDrives } = useStore();
+/** The large-files tab of the Files page: everything over 100 MB the last scan saw. */
+export function LargeFilesPanel() {
+  const { current, toast, refreshDrives, startScan, scanning } = useStore();
   const [files, setFiles] = useState<LargeFile[] | null>(null);
   const [kind, setKind] = useState<Kind>("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [confirm, setConfirm] = useState(false);
-  const scanDone = !!current;
+  // A result read back from history has no file list behind it.
+  const scanDone = !!current && !current.fromHistory;
 
   useEffect(() => {
     setFiles(null);
     setSelected(new Set());
-    if (current) void api.largeFiles(current.root).then(setFiles);
-  }, [current?.root, current?.scannedAt]);
+    if (current && !current.fromHistory) void api.largeFiles(current.root).then(setFiles);
+  }, [current?.root, current?.scannedAt, current?.fromHistory]);
 
   const shown = useMemo(() => (files ?? []).filter((f) => kind === "all" || kindOf(f.name) === kind), [files, kind]);
   const chosen = (files ?? []).filter((f) => selected.has(f.path));
   const chosenBytes = chosen.reduce((s, f) => s + f.size, 0);
 
-  const recycle = async () => {
+  const remove = async (permanent: boolean) => {
     setConfirm(false);
-    const out = await api.recycleFiles(chosen.map((f) => f.path));
-    toast(`已移到回收站：${out.removedFiles} 个文件，${formatBytes(out.freed)}${out.skippedFiles ? `，${out.skippedFiles} 个失败` : ""}`);
+    const out = await api.deleteFiles(
+      chosen.map((f) => f.path),
+      permanent,
+    );
+    toast(`${permanent ? "已删除" : "已移到回收站"}：${formatBytes(out.freed)}${out.skippedFiles ? `，${out.skippedFiles} 个失败` : ""}`);
     setFiles((list) => list?.filter((f) => !selected.has(f.path)) ?? null);
     setSelected(new Set());
     void refreshDrives();
   };
 
   return (
-    <div className="page">
-      <div className="page-head">
-        <div>
-          <h1 className="page-title">大文件</h1>
-          <div className="page-sub">超过 100 MB 的文件。删除的文件会先放进回收站，可以找回。</div>
+    <>
+      <div className="panel-head">
+        <div className="muted" style={{ fontSize: 13 }}>
+          超过 100 MB 的文件
         </div>
         <div className="filter-chips">
           {KINDS.map((k) => (
@@ -92,7 +96,12 @@ export function LargeFiles() {
           <div className="empty-icon">
             <FileBox size={30} />
           </div>
-          <div>扫描完成后会在这里列出大文件</div>
+          <div>{current?.fromHistory ? "概览里的数字来自上次扫描，列出大文件需要重新扫描一次" : "扫描完成后会在这里列出大文件"}</div>
+          {current?.fromHistory && (
+            <button className="btn btn-primary" disabled={!!scanning} onClick={() => startScan()}>
+              重新扫描
+            </button>
+          )}
         </div>
       )}
 
@@ -191,37 +200,12 @@ export function LargeFiles() {
             取消选择
           </button>
           <button className="btn btn-primary btn-lg" onClick={() => setConfirm(true)}>
-            <Trash size={17} /> 移到回收站
+            <Trash size={17} /> 删除
           </button>
         </div>
       )}
 
-      {confirm && (
-        <Dialog onClose={() => setConfirm(false)}>
-          <div className="dialog-body">
-            <h2 className="dialog-title">把 {chosen.length} 个文件移到回收站？</h2>
-            <div className="muted" style={{ fontSize: 13.5 }}>
-              可以在回收站里找回。注意：放在回收站里仍然占用空间，清空回收站后才真正释放 {formatBytes(chosenBytes)}。
-            </div>
-            <div className="dialog-list">
-              {chosen.map((f) => (
-                <div key={f.path} className="dialog-list-row">
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
-                  <span className="num muted">{formatBytes(f.size)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className="dialog-actions">
-            <button className="btn" onClick={() => setConfirm(false)}>
-              取消
-            </button>
-            <button className="btn btn-primary" onClick={recycle}>
-              移到回收站
-            </button>
-          </div>
-        </Dialog>
-      )}
-    </div>
+      {confirm && <DeleteDialog items={chosen} onCancel={() => setConfirm(false)} onConfirm={remove} />}
+    </>
   );
 }

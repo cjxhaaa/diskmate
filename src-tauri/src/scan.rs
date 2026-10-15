@@ -5,7 +5,7 @@ use crate::util::{
     display, hard_link_identity, home, is_link, long_path, on_disk_len_at, unix_secs,
 };
 use rayon::prelude::*;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -147,14 +147,14 @@ pub struct ScanData {
     pub summary: Summary,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CategoryStat {
-    pub id: &'static str,
+    pub id: String,
     pub bytes: u64,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Summary {
     pub root: String,
@@ -245,7 +245,10 @@ impl Totals {
         self.0
             .into_iter()
             .filter(|(_, b)| *b > 0)
-            .map(|(id, bytes)| CategoryStat { id, bytes })
+            .map(|(id, bytes)| CategoryStat {
+                id: id.to_string(),
+                bytes,
+            })
             .collect()
     }
 }

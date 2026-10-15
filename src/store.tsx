@@ -5,7 +5,10 @@ import {
   type AnalyzeProgress,
   type CleanItem,
   type CleanResult,
+  type DownloadItem,
   type DriveInfo,
+  type DupeGroup,
+  type DupeProgress,
   type ScanProgress,
   type ScanSummary,
 } from "./api";
@@ -17,16 +20,30 @@ export interface Scanning {
   startedAt: number;
 }
 
+/**
+ * A scan result. `fromHistory` ones were read back from a previous session: their totals are real,
+ * but the folder tree behind them was not kept, so the space map and large files need a new scan.
+ */
+export type ShownSummary = ScanSummary & { fromHistory?: boolean };
+
 export type AnalysisState =
   | { status: "idle" }
   | { status: "loading"; progress: AnalyzeProgress | null }
   | { status: "done"; items: CleanItem[]; at: number }
   | { status: "error"; message: string };
 
+export type DupeState =
+  | { status: "idle" }
+  | { status: "running"; progress: DupeProgress | null; minSize: number }
+  | { status: "done"; groups: DupeGroup[]; minSize: number; at: number };
+
 interface Toast {
   id: number;
   text: string;
 }
+
+/** A scan this recent is shown at launch instead of scanning again. */
+const REUSE_SCAN_SECS = 24 * 3600;
 
 interface Store {
   drives: DriveInfo[];
@@ -34,12 +51,14 @@ interface Store {
   root: string;
   setRoot: (root: string) => void;
   /** Finished scans, one per drive, keyed by uppercased root. */
-  scans: Record<string, ScanSummary>;
+  scans: Record<string, ShownSummary>;
   /** The finished scan of the drive on screen. */
-  current: ScanSummary | null;
+  current: ShownSummary | null;
   scanning: Scanning | null;
   startScan: (root?: string) => void;
   cancelScan: () => void;
+  /** Bumped whenever a scan of any drive finishes, so the history views know to re-read. */
+  scanCount: number;
   analysis: AnalysisState;
   analyze: () => void;
   cleanup: (ids: string[]) => Promise<CleanResult[]>;
@@ -52,6 +71,14 @@ interface Store {
   appIcons: Record<string, string>;
   loadApps: () => void;
   dropApp: (id: string) => void;
+  downloads: DownloadItem[] | null;
+  downloadsLoading: boolean;
+  loadDownloads: () => void;
+  dropDownloads: (paths: string[]) => void;
+  dupes: DupeState;
+  findDupes: (minSize: number) => void;
+  cancelDupes: () => void;
+  dropDupeFiles: (paths: string[]) => void;
 }
 
 const Ctx = createContext<Store | null>(null);
@@ -67,13 +94,17 @@ const key = (root: string) => root.toUpperCase();
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [drives, setDrives] = useState<DriveInfo[]>([]);
   const [root, setRoot] = useState("C:\\");
-  const [scans, setScans] = useState<Record<string, ScanSummary>>({});
+  const [scans, setScans] = useState<Record<string, ShownSummary>>({});
   const [scanning, setScanning] = useState<Scanning | null>(null);
+  const [scanCount, setScanCount] = useState(0);
   const [analysis, setAnalysis] = useState<AnalysisState>({ status: "idle" });
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [apps, setApps] = useState<AppInfo[] | null>(null);
   const [appsLoading, setAppsLoading] = useState(false);
   const [appIcons, setAppIcons] = useState<Record<string, string>>({});
+  const [downloads, setDownloads] = useState<DownloadItem[] | null>(null);
+  const [downloadsLoading, setDownloadsLoading] = useState(false);
+  const [dupes, setDupes] = useState<DupeState>({ status: "idle" });
   const analysisStarted = useRef(false);
   const startedOnce = useRef(false);
   const toastId = useRef(0);
@@ -135,6 +166,46 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const dropApp = useCallback((id: string) => setApps((list) => list?.filter((a) => a.id !== id) ?? null), []);
 
+  const loadDownloads = useCallback(() => {
+    setDownloadsLoading(true);
+    api
+      .analyzeDownloads()
+      .then(setDownloads)
+      .catch((e) => toast(`读取下载文件夹失败：${e}`))
+      .finally(() => setDownloadsLoading(false));
+  }, [toast]);
+
+  const dropDownloads = useCallback((paths: string[]) => {
+    const gone = new Set(paths);
+    setDownloads((list) => list?.filter((d) => !gone.has(d.path)) ?? null);
+  }, []);
+
+  const findDupes = useCallback((minSize: number) => {
+    setDupes({ status: "running", progress: null, minSize });
+    void api.findDuplicates(minSize);
+  }, []);
+
+  const cancelDupes = useCallback(() => {
+    void api.cancelDuplicates();
+  }, []);
+
+  const dropDupeFiles = useCallback((paths: string[]) => {
+    const gone = new Set(paths);
+    setDupes((d) =>
+      d.status !== "done"
+        ? d
+        : {
+            ...d,
+            groups: d.groups
+              .map((g) => {
+                const files = g.files.filter((f) => !gone.has(f.path));
+                return { ...g, files, wasted: g.size * Math.max(files.length - 1, 0) };
+              })
+              .filter((g) => g.files.length > 1),
+          },
+    );
+  }, []);
+
   // Events, wired once.
   useEffect(() => {
     const offs = [
@@ -142,6 +213,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       api.onScanDone((summary) => {
         setScans((all) => ({ ...all, [key(summary.root)]: summary }));
         setScanning(null);
+        setScanCount((n) => n + 1);
         void refreshDrives();
         if (!analysisStarted.current) analyze();
       }),
@@ -150,21 +222,33 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setApps((list) => list?.map((a) => (a.id === m.id ? { ...a, ...m, measured: true } : a)) ?? null),
       ),
       api.onAppIcons((icons) => setAppIcons((old) => ({ ...old, ...icons }))),
+      api.onDupesProgress((p) => setDupes((d) => (d.status === "running" ? { ...d, progress: p } : d))),
+      api.onDupesDone((groups) =>
+        setDupes((d) => ({ status: "done", groups, minSize: d.status === "idle" ? 1024 * 1024 : d.minSize, at: Date.now() })),
+      ),
     ];
     return () => offs.forEach((p) => p.then((off) => off()));
   }, [analyze, refreshDrives]);
 
-  // First launch: scan the system drive once, unless this window already has its scan (a reload).
+  // First launch: show the system drive's last scan if it is recent, otherwise scan it once.
   // Every later scan is the user's call — a whole-disk read is not something to do behind their back.
   useEffect(() => {
     if (startedOnce.current) return;
     startedOnce.current = true;
-    void Promise.all([refreshDrives(), api.scanSummaries()]).then(([list, done]) => {
+    void Promise.all([refreshDrives(), api.scanSummaries()]).then(async ([list, done]) => {
       const sys = list.find((d) => d.isSystem) ?? list[0];
       if (done.length) setScans(Object.fromEntries(done.map((s) => [key(s.root), s])));
       if (!sys) return;
       setRoot(sys.root);
-      if (!done.some((s) => key(s.root) === key(sys.root))) startScan(sys.root);
+      if (done.some((s) => key(s.root) === key(sys.root))) return;
+      const past = await api.scanHistory(sys.root).catch(() => [] as ScanSummary[]);
+      const last = past[past.length - 1];
+      if (last && Date.now() / 1000 - last.scannedAt < REUSE_SCAN_SECS) {
+        setScans((all) => ({ ...all, [key(last.root)]: { ...last, fromHistory: true } }));
+        analyze();
+      } else {
+        startScan(sys.root);
+      }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -181,6 +265,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       scanning,
       startScan,
       cancelScan,
+      scanCount,
       analysis,
       analyze,
       cleanup,
@@ -192,8 +277,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       appIcons,
       loadApps,
       dropApp,
+      downloads,
+      downloadsLoading,
+      loadDownloads,
+      dropDownloads,
+      dupes,
+      findDupes,
+      cancelDupes,
+      dropDupeFiles,
     }),
-    [drives, root, scans, current, scanning, startScan, cancelScan, analysis, analyze, cleanup, refreshDrives, toasts, toast, apps, appsLoading, appIcons, loadApps, dropApp],
+    [
+      drives, root, scans, current, scanning, startScan, cancelScan, scanCount, analysis, analyze, cleanup, refreshDrives,
+      toasts, toast, apps, appsLoading, appIcons, loadApps, dropApp, downloads, downloadsLoading, loadDownloads,
+      dropDownloads, dupes, findDupes, cancelDupes, dropDupeFiles,
+    ],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

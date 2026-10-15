@@ -1,22 +1,24 @@
 import { useState } from "react";
-import { AppWindow, Files, HardDrive, LayoutDashboard, LayoutGrid, Sparkles } from "lucide-react";
+import { AppWindow, FolderSearch, HardDrive, LayoutDashboard, LayoutGrid, Sparkles, TrendingUp } from "lucide-react";
 import { Toasts, UsageBar } from "./components/ui";
 import { formatBytes } from "./format";
 import { Apps } from "./pages/Apps";
 import { Cleanup } from "./pages/Cleanup";
 import { Explorer } from "./pages/Explorer";
-import { LargeFiles } from "./pages/LargeFiles";
+import { Changes } from "./pages/Changes";
+import { Files } from "./pages/Files";
 import { Overview } from "./pages/Overview";
 import { StoreProvider, useStore } from "./store";
 
-type Page = "overview" | "cleanup" | "apps" | "explorer" | "large";
+type Page = "overview" | "cleanup" | "apps" | "files" | "explorer" | "changes";
 
 const NAV: { id: Page; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "overview", label: "概览", icon: LayoutDashboard },
   { id: "cleanup", label: "智能清理", icon: Sparkles },
   { id: "apps", label: "应用管理", icon: AppWindow },
+  { id: "files", label: "文件整理", icon: FolderSearch },
   { id: "explorer", label: "空间分析", icon: LayoutGrid },
-  { id: "large", label: "大文件", icon: Files },
+  { id: "changes", label: "空间变化", icon: TrendingUp },
 ];
 
 function Shell() {
@@ -66,7 +68,8 @@ function Shell() {
         {page === "cleanup" && <Cleanup />}
         {page === "apps" && <Apps />}
         {page === "explorer" && <Explorer />}
-        {page === "large" && <LargeFiles />}
+        {page === "files" && <Files />}
+        {page === "changes" && <Changes />}
       </main>
       <Toasts />
     </div>
