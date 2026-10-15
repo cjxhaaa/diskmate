@@ -161,6 +161,8 @@ const appList = apps.map(([name, publisher, version, tags, inst, data, ago, date
   _data: data * GB,
 }));
 
+let mockStatusChecks = 0;
+
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   if (cmd === "list_apps") {
     await sleep(500);
@@ -326,18 +328,28 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
       return undefined as T;
     case "cancel_duplicates":
       return undefined as T;
+    case "migration_status":
     case "migration_candidates": {
-      await sleep(700);
-      const c = (id: string, title: string, desc: string, path: string, size: number, method: string, blockers: string[] = [], movedTo: string | null = null) => ({
-        id, title, desc, path, size: size * GB, method, blockers, movedTo,
+      const full = cmd === "migration_candidates";
+      if (!full) mockStatusChecks++;
+      await sleep(full ? 2500 : 150);
+      const c = (id: string, title: string, desc: string, path: string, size: number, method: string, group: string, blockers: string[] = [], movedTo: string | null = null) => ({
+        id, title, desc, path, method, group, blockers, movedTo,
+        size: full || movedTo ? size * GB : 0,
+        measured: full || !!movedTo,
       });
+      // WeChat counts as closed from the second status check on, so 重新检查 can be tried.
+      const wechat = mockStatusChecks < 2 ? ["微信"] : [];
+      const project = "用户目录下的文件夹，通常是代码项目。搬走后原路径照常可用；IDE、终端里打开着的话要先关掉。";
       return [
-        c(String.raw`folder:c:\users\40501\slime`, "slime", "用户目录下的文件夹，通常是代码项目。搬走后原路径照常可用；IDE、终端里打开着的话要先关掉。", String.raw`C:\Users\40501\slime`, 30.95, "junction"),
-        c("wechat", "微信聊天文件", "微信 4.x 的聊天图片、视频和文件。搬走后微信照常读写，但搬之前必须退出微信。", String.raw`C:\Users\40501\xwechat_files`, 15.01, "junction", ["微信"]),
-        c("qqmusic", "QQ 音乐", "下载的歌曲和缓存。搬之前要退出 QQ 音乐。", String.raw`C:\Users\40501\AppData\Roaming\Tencent\QQMusic`, 10.76, "junction"),
-        c("android-sdk", "Android SDK", "SDK、模拟器系统镜像和构建工具。项目里写的 SDK 路径不用改。", String.raw`C:\Users\40501\AppData\Local\Android\Sdk`, 8.64, "junction", ["adb"]),
-        c("downloads", "下载", "Windows 会把「下载」文件夹指向新位置，浏览器下载的文件以后也直接存到那里。", String.raw`C:\Users\40501\Downloads`, 3.18, "knownFolder"),
-        c("gradle", "Gradle 缓存", "所有 Android / Java 项目下载过的依赖。", String.raw`C:\Users\40501\.gradle`, 5.46, "junction", [], String.raw`D:\Users\40501\.gradle`),
+        c(String.raw`folder:c:\users\40501\slime`, "slime", project, String.raw`C:\Users\40501\slime`, 30.95, "junction", "project"),
+        c(String.raw`folder:c:\users\40501\diskmate`, "diskmate", project, String.raw`C:\Users\40501\diskmate`, 6.2, "junction", "project"),
+        c("wechat", "微信聊天文件", "微信 4.x 的聊天图片、视频和文件。搬走后微信照常读写，但搬之前必须退出微信。", String.raw`C:\Users\40501\xwechat_files`, 15.01, "junction", "app", wechat),
+        c("qqmusic", "QQ 音乐", "下载的歌曲和缓存。搬之前要退出 QQ 音乐。", String.raw`C:\Users\40501\AppData\Roaming\Tencent\QQMusic`, 10.76, "junction", "app"),
+        c("android-sdk", "Android SDK", "SDK、模拟器系统镜像和构建工具。项目里写的 SDK 路径不用改。", String.raw`C:\Users\40501\AppData\Local\Android\Sdk`, 8.64, "junction", "dev", ["adb"]),
+        c("downloads", "下载", "Windows 会把「下载」文件夹指向新位置，浏览器下载的文件以后也直接存到那里。", String.raw`C:\Users\40501\Downloads`, 3.18, "knownFolder", "system"),
+        c("documents", "文档", "「文档」文件夹整体搬走。微信默认把聊天文件存在「文档」里，会跟着一起搬。", String.raw`C:\Users\40501\Documents`, 1.4, "knownFolder", "system", wechat),
+        c("gradle", "Gradle 缓存", "所有 Android / Java 项目下载过的依赖。", String.raw`C:\Users\40501\.gradle`, 5.46, "junction", "dev", [], String.raw`D:\Users\40501\.gradle`),
       ] as T;
     }
     case "migrate_folder": {
@@ -347,7 +359,9 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
           await sleep(500);
           emit("migrate-progress", { id, phase, done: frac * 10 * GB, total: 10 * GB });
         }
-        emit("migrate-done", { id, ok: true, error: null });
+        // QQ 音乐 fails, so the result view's failure row can be seen in the preview.
+        const ok = id !== "qqmusic";
+        emit("migrate-done", { id, ok, error: ok ? null : "有程序正在使用这个文件夹，请先关闭用到它的程序（编辑器、终端等）" });
       })();
       return undefined as T;
     }

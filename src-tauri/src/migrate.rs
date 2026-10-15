@@ -34,10 +34,14 @@ pub struct Candidate {
     pub path: String,
     pub size: u64,
     pub method: Method,
+    /// `app` | `dev` | `system` | `project`: how the list is grouped.
+    pub group: &'static str,
     /// Running programs that have to be closed first.
     pub blockers: Vec<String>,
     /// Already moved: where to.
     pub moved_to: Option<String>,
+    /// False when `size` was not worked out yet (the quick status check skips measuring).
+    pub measured: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -57,6 +61,7 @@ struct Known {
     desc: &'static str,
     path: PathBuf,
     method: Method,
+    group: &'static str,
     /// Executable names (lowercase) that hold this folder open.
     blockers: &'static [&'static str],
 }
@@ -88,6 +93,11 @@ fn known() -> Vec<Known> {
         desc,
         path,
         method,
+        group: match id {
+            "wechat" | "qqmusic" => "app",
+            _ if method == Method::KnownFolder => "system",
+            _ => "dev",
+        },
         blockers,
     };
     vec![
@@ -199,29 +209,37 @@ fn project_folders(exclude: &[PathBuf]) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Everything worth moving, measured, with what is already moved.
-pub fn candidates(dir: &Path) -> Vec<Candidate> {
+/// Everything worth moving, with what is already moved. With `measure` false nothing is measured:
+/// sizes are 0 (except for moved folders, whose size was recorded) and every top-level folder is
+/// listed, big or not — it answers in a blink, for re-checking what is running.
+pub fn candidates(dir: &Path, measure_sizes: bool) -> Vec<Candidate> {
     use rayon::prelude::*;
     let moved = records(dir);
     let running = running_processes();
     let known = known();
     let known_paths: Vec<PathBuf> = known.iter().map(|k| k.path.clone()).collect();
+    let size_of = |p: &Path, rec: Option<&Record>| match rec {
+        Some(r) => (r.size, true),
+        None if measure_sizes => (measure(p, None).bytes, true),
+        None => (0, false),
+    };
     let mut out: Vec<Candidate> = known
         .par_iter()
         .filter(|k| k.path.exists())
         .map(|k| {
             let rec = moved.iter().find(|r| r.id == k.id);
+            let (size, measured) = size_of(&k.path, rec);
             Candidate {
                 id: k.id.into(),
                 title: k.title.into(),
                 desc: k.desc.into(),
                 path: display(&k.path),
-                size: rec
-                    .map(|r| r.size)
-                    .unwrap_or_else(|| measure(&k.path, None).bytes),
+                size,
                 method: k.method,
+                group: k.group,
                 blockers: blockers_for(k.blockers, &running),
                 moved_to: rec.map(|r| r.target.clone()),
+                measured,
             }
         })
         .collect();
@@ -231,18 +249,21 @@ pub fn candidates(dir: &Path) -> Vec<Candidate> {
             let id = format!("folder:{}", display(p).to_lowercase());
             let rec = moved.iter().find(|r| r.id == id);
             let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let (size, measured) = size_of(p, rec);
             Candidate {
                 id,
                 title: name,
                 desc: "用户目录下的文件夹，通常是代码项目。搬走后原路径照常可用；IDE、终端里打开着的话要先关掉。".into(),
                 path: display(p),
-                size: rec.map(|r| r.size).unwrap_or_else(|| measure(p, None).bytes),
+                size,
                 method: Method::Junction,
+                group: "project",
                 blockers: Vec::new(),
                 moved_to: rec.map(|r| r.target.clone()),
+                measured,
             }
         })
-        .filter(|c| c.size >= 1024 * 1024 * 1024 || c.moved_to.is_some())
+        .filter(|c| !c.measured || c.size >= 1024 * 1024 * 1024 || c.moved_to.is_some())
         .collect();
     out.extend(projects);
     out.sort_by(|a, b| {
@@ -539,8 +560,10 @@ pub fn restore(
             if let Err(e) = copy_tree(&target, &source, size.bytes, &|d| {
                 report("copy", d, size.bytes)
             })
-            .and_then(|_| same_contents(&target, &source))
-            {
+            .and_then(|_| {
+                report("verify", size.bytes, size.bytes);
+                same_contents(&target, &source)
+            }) {
                 let _ = crate::clean::remove_tree_pub(&source);
                 let _ = make_junction(&source, &target);
                 return Err(e);
@@ -551,6 +574,7 @@ pub fn restore(
             copy_tree(&target, &source, size.bytes, &|d| {
                 report("copy", d, size.bytes)
             })?;
+            report("verify", size.bytes, size.bytes);
             same_contents(&target, &source)?;
             set_known_folder(id, &source)?;
         }
@@ -617,7 +641,7 @@ mod real {
     #[ignore]
     fn real_candidates() {
         let started = std::time::Instant::now();
-        for c in super::candidates(&std::env::temp_dir().join("diskmate-none")) {
+        for c in super::candidates(&std::env::temp_dir().join("diskmate-none"), true) {
             println!(
                 "{:<26} {:>7.2} GB  {:?}  blockers={:?}  {}",
                 c.title.chars().take(26).collect::<String>(),

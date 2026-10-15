@@ -47,7 +47,16 @@ fn history_dir(app: &AppHandle) -> PathBuf {
 #[tauri::command]
 async fn migration_candidates(app: AppHandle) -> Result<Vec<migrate::Candidate>, String> {
     let dir = data_dir(&app);
-    tauri::async_runtime::spawn_blocking(move || migrate::candidates(&dir))
+    tauri::async_runtime::spawn_blocking(move || migrate::candidates(&dir, true))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// The same list without measuring anything: which programs are running and what is moved.
+#[tauri::command]
+async fn migration_status(app: AppHandle) -> Result<Vec<migrate::Candidate>, String> {
+    let dir = data_dir(&app);
+    tauri::async_runtime::spawn_blocking(move || migrate::candidates(&dir, false))
         .await
         .map_err(|e| e.to_string())
 }
@@ -668,6 +677,7 @@ pub fn run() {
             cancel_duplicates,
             delete_duplicates,
             migration_candidates,
+            migration_status,
             migrate_folder,
             list_vdisks,
             shutdown_wsl,

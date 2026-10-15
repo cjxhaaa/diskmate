@@ -190,8 +190,11 @@ export interface MoveCandidate {
   path: string;
   size: number;
   method: "junction" | "knownFolder";
+  group: "app" | "dev" | "system" | "project";
   blockers: string[];
   movedTo: string | null;
+  /** False when `size` is not known yet (the quick status check does not measure). */
+  measured: boolean;
 }
 
 export interface MoveProgress {
@@ -259,6 +262,7 @@ export const api = {
   cancelDuplicates: () => call<void>("cancel_duplicates"),
   deleteDuplicates: (paths: string[], permanent: boolean) => call<Outcome>("delete_duplicates", { paths, permanent }),
   migrationCandidates: () => call<MoveCandidate[]>("migration_candidates"),
+  migrationStatus: () => call<MoveCandidate[]>("migration_status"),
   migrateFolder: (id: string, driveRoot: string | null, restore: boolean) => call<void>("migrate_folder", { id, driveRoot, restore }),
   onMigrateProgress: (h: (p: MoveProgress) => void) => on("migrate-progress", h),
   onMigrateDone: (h: (d: MoveDone) => void) => on("migrate-done", h),
