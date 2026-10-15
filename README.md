@@ -1,0 +1,54 @@
+# DiskMate
+
+Windows 磁盘空间分析与清理工具。参考 WizTree / TreeSize（空间分析）、CCleaner / 电脑管家（分类清理）和
+npkill / kondo（开发者构建产物）的做法，针对「开发者的 C 盘」做了专门的规则。
+
+## 功能
+
+- **概览**：磁盘用量 + 按类别的环形图（系统、软件、开发工具与缓存、应用数据、个人文件、项目、虚拟内存/休眠、
+  系统保留区），鼠标移上去解释每一类是什么。
+- **智能清理**：分组列出可清理的内容，每项都写明是什么、删了有什么影响，并标注「安全 / 谨慎 / 需确认」。
+  默认只勾选安全项；清理后显示实际释放的空间和可用空间变化。
+  - 系统垃圾：临时文件（只删 1 天前的）、Windows 更新缓存、崩溃转储、着色器缓存、回收站
+  - 开发缓存：Gradle 日志/依赖、npm/bun/pip/yarn/Go 缓存、cargo 缓存、旧版 Gradle、没被模拟器使用的
+    Android 系统镜像、模拟器快照、旧版本 IDE 缓存、VS Code/Cursor 缓存、AI 插件索引、
+    30 天未改动项目的 node_modules / target / build
+  - 应用缓存：Chrome / Edge 缓存（不动书签、密码、登录状态）
+  - 需要确认：闲置的 Git worktree（`git worktree remove`，分支保留）、60 天没用的模拟器、关闭休眠
+  - 只给指引：微信、QQ 音乐、Claude、下载文件夹、虚拟内存——这些直接删文件夹会出问题，只告诉你在哪清
+- **空间分析**：可逐层点进去的矩形树图 + 按大小排序的列表。
+- **大文件**：超过 100 MB 的文件，按类型筛选，删除时先进回收站。
+
+## 安全设计
+
+- 前端只能按 id 选择后端分析出来的项目，不能传任意路径去删。
+- 每个要删除的路径都要通过白名单检查（`clean::allowed`）：必须在用户目录或几个已知的系统缓存目录之内，
+  且不能是用户目录、AppData、文档、桌面、下载这些根目录本身。
+- 所有文件操作走 `\\?\` 长路径，不会因为路径超过 260 字符删一半。
+- 正在使用的文件跳过不报错；释放的空间按实际删掉的文件累计。
+- 大文件页不允许删除 AppData 和 `.android` / `.gradle` 这类工具目录里的单个文件。
+
+## 开发
+
+```bash
+npm install
+npm run tauri dev      # 开发模式
+npm run tauri build    # 生成 src-tauri/target/release/bundle/nsis/DiskMate_*_x64-setup.exe
+```
+
+只看界面不需要 Rust：`npm run dev` 后在浏览器打开 http://127.0.0.1:1430，会用 `src/mock.ts` 的假数据。
+
+测试：
+
+```bash
+cd src-tauri
+cargo test                                         # 单元测试
+cargo test --release real_scan -- --ignored --nocapture      # 只读：扫描本机系统盘
+cargo test --release real_analysis -- --ignored --nocapture  # 只读：分析本机可清理内容
+```
+
+## 已知限制
+
+- 扫描用普通权限，`System Volume Information` 等目录读不到，计入「系统保留区」。
+- 只对 8 MB 以上的硬链接文件去重；`C:\Windows\WinSxS` 里的小文件硬链接会被重复计算，
+  所以「Windows 系统」一项会偏大一些。
