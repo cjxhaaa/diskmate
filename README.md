@@ -8,9 +8,8 @@
 
 Windows 磁盘分析与清理工具 · 开源免费 · 安装包 2.6 MB · 不常驻、不打扰
 
-[![Release](https://img.shields.io/github/v/release/cjxhaaa/diskmate?color=5b6cff&label=%E4%B8%8B%E8%BD%BD)](https://github.com/cjxhaaa/diskmate/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/cjxhaaa/diskmate/total?color=10b981)](https://github.com/cjxhaaa/diskmate/releases)
-[![License](https://img.shields.io/github/license/cjxhaaa/diskmate?color=8a55e8)](LICENSE)
+[![版本](https://img.shields.io/github/v/release/cjxhaaa/diskmate?color=5b6cff&label=%E7%89%88%E6%9C%AC)](https://github.com/cjxhaaa/diskmate/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-8a55e8)](LICENSE)
 ![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4)
 ![Built with Tauri](https://img.shields.io/badge/Tauri%202-Rust%20%2B%20React-24c8db)
 
