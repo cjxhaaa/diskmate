@@ -17,8 +17,6 @@ A disk analyzer and cleaner for Windows · free & open source · 2.6 MB installe
 
 <img src="docs/social-preview.png" width="880" alt="DiskMate: see where your C: drive went and free it up safely">
 
-<sub>▶ The full 1-minute intro video (with sound) is <a href="#intro-video">below</a></sub>
-
 </div>
 
 ## Intro video
