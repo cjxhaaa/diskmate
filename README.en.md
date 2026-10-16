@@ -15,7 +15,7 @@ A disk analyzer and cleaner for Windows · free & open source · 2.6 MB installe
 
 [Download](https://github.com/cjxhaaa/diskmate/releases/latest) · [中文说明](README.md)
 
-<img src="docs/screenshots/overview-light.webp" width="880" alt="DiskMate overview">
+<img src="docs/social-preview.png" width="880" alt="DiskMate: see where your C: drive went and free it up safely">
 
 <sub>▶ The full 1-minute intro video (with sound) is <a href="#intro-video">below</a></sub>
 
@@ -26,6 +26,8 @@ A disk analyzer and cleaner for Windows · free & open source · 2.6 MB installe
 https://github.com/user-attachments/assets/2995b658-9f1d-45e8-a079-6bb701320412
 
 <sub>A 60-second bilingual intro; every frame and note of the score is generated from code.</sub>
+
+<p align="center"><img src="docs/screenshots/overview-light.webp" width="880" alt="DiskMate overview"></p>
 
 > The interface is in Simplified Chinese for now; an English UI is on the roadmap.
 
