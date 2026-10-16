@@ -73,9 +73,13 @@ DiskMate 的想法很简单：
 
 ## 下载安装
 
-1. 到 [Releases](https://github.com/cjxhaaa/diskmate/releases/latest) 下载 `DiskMate_x.y.z_x64-setup.exe`；
-2. 双击安装。装在当前用户下，**不需要管理员权限**；
-3. 支持 Windows 10（1809 及以上）和 Windows 11，64 位。界面用系统自带的 WebView2，Windows 11 已内置，Windows 10 缺少时安装程序会自动补上。
+支持 Windows 10（1809 及以上）和 Windows 11，64 位。三种方式任选：
+
+| 方式 | 怎么装 | 适合 |
+|---|---|---|
+| **安装版** | 在 [Releases](https://github.com/cjxhaaa/diskmate/releases/latest) 下载 `DiskMate_x.y.z_x64-setup.exe`，双击安装 | 大多数人。装在当前用户下，**不需要管理员权限**；缺少 WebView2 时会自动补上 |
+| **便携版** | 下载 `DiskMate_x.y.z_x64_portable.zip`，解压后双击 `DiskMate.exe` | 不想安装、放在 U 盘里用。需要系统已有 WebView2（Windows 11 自带） |
+| **Scoop** | `scoop bucket add diskmate https://github.com/cjxhaaa/diskmate`<br>`scoop install diskmate` | 用 [Scoop](https://scoop.sh/) 管理软件的人，之后 `scoop update diskmate` 升级 |
 
 > [!NOTE]
 > 安装包暂未做代码签名，Windows SmartScreen 可能提示「已保护你的电脑」。点「更多信息 → 仍要运行」即可。也可以[从源码构建](#从源码构建)。

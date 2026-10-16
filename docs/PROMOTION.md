@@ -20,7 +20,8 @@
 | **Hacker News** · Show HN | 见下方英文草稿，工作日北京时间晚上 9–11 点（美东上午）发 | 必须英文界面或至少英文 README；当前界面是中文，可先等英文界面 |
 | **Reddit** | r/software、r/Windows11、r/opensource | 各版规不同，r/Windows 不允许自荐，先读版规 |
 | **AlternativeTo** | 登记为 WizTree / TreeSize / CCleaner 的替代品 | 一次登记，持续有人搜到 |
-| **winget / Scoop** | 提交安装清单（manifest） | 有稳定版本号和下载地址后再提交 |
+| **Scoop** | 仓库自带 bucket（`bucket/diskmate.json`），每次发版更新版本号和哈希；稳定后可申请进 Scoop 官方 extras 仓库 | 已就绪 |
+| **winget** | 向 microsoft/winget-pkgs 提交安装清单（可用 `wingetcreate new <安装包地址>` 生成） | 需要公开仓库和稳定的下载地址 |
 
 ## 文案草稿
 

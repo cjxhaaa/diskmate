@@ -2,7 +2,8 @@
 #
 # To release: bump the version in package.json, src-tauri/Cargo.toml and src-tauri/tauri.conf.json,
 # add a CHANGELOG entry, push, then run this workflow from the Actions tab with the new tag
-# (e.g. v0.2.0). Review the draft release it creates and publish it.
+# (e.g. v0.2.0). Review the draft release it creates (installer + portable zip) and publish it.
+# Then update bucket/diskmate.json (version, url, hash of the portable zip) so Scoop users get it.
 name: Release
 
 on:
@@ -42,3 +43,17 @@ jobs:
           releaseBody: 更新内容见 [CHANGELOG](https://github.com/${{ github.repository }}/blob/master/CHANGELOG.md)。
           releaseDraft: true
           prerelease: false
+
+      - name: Portable zip
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $v = "${{ inputs.tag }}".TrimStart("v")
+          New-Item -ItemType Directory portable | Out-Null
+          Copy-Item src-tauri/target/release/diskmate.exe portable/DiskMate.exe
+          Copy-Item packaging/portable-readme.txt "portable/说明.txt"
+          $zip = "DiskMate_${v}_x64_portable.zip"
+          Compress-Archive -Path portable/* -DestinationPath $zip
+          gh release upload "${{ inputs.tag }}" $zip --clobber
+          "sha256: " + (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
