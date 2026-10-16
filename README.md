@@ -1,106 +1,169 @@
+<div align="center">
+
+<img src="app-icon.svg" width="96" alt="DiskMate">
+
 # DiskMate
 
-Windows 磁盘空间分析与清理工具。参考 WizTree / TreeSize（空间分析）、CCleaner / 电脑管家（分类清理）和
-npkill / kondo（开发者构建产物）的做法，针对「开发者的 C 盘」做了专门的规则。
+**看清 C 盘都去哪了，放心地腾出空间**
+
+Windows 磁盘分析与清理工具 · 开源免费 · 安装包 2.6 MB · 不常驻、不打扰
+
+[![Release](https://img.shields.io/github/v/release/cjxhaaa/diskmate?color=5b6cff&label=%E4%B8%8B%E8%BD%BD)](https://github.com/cjxhaaa/diskmate/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/cjxhaaa/diskmate/total?color=10b981)](https://github.com/cjxhaaa/diskmate/releases)
+[![License](https://img.shields.io/github/license/cjxhaaa/diskmate?color=8a55e8)](LICENSE)
+![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4)
+![Built with Tauri](https://img.shields.io/badge/Tauri%202-Rust%20%2B%20React-24c8db)
+
+[下载](https://github.com/cjxhaaa/diskmate/releases/latest) ·
+[功能](#功能) ·
+[截图](#截图) ·
+[常见问题](#常见问题) ·
+[English](README.en.md)
+
+<img src="docs/screenshots/overview-light.webp" width="880" alt="DiskMate 概览">
+
+</div>
+
+## 为什么做 DiskMate
+
+500 GB 的 C 盘怎么总是不够用？常见的清理软件要么只删临时文件，要么「一键加速」却不告诉你删了什么，还常驻后台弹窗推广。
+
+DiskMate 的想法很简单：
+
+- **先把账算清楚**：每个 GB 去了哪个类别、哪个文件夹、哪个程序，一目了然；
+- **再让你自己决定删什么**：每一项都写明是什么、删了有什么影响，标出「安全 / 谨慎 / 需确认」，默认只勾安全的；
+- **不打扰你**：没有广告、没有后台常驻服务、不加开机启动，后台工作一律低优先级。
+
+它对开发者特别友好：Gradle、Android SDK 与模拟器、node_modules、Rust target、各种包管理器缓存、闲置的 Git worktree、只涨不缩的 WSL / Docker 虚拟磁盘……这些往往才是 C 盘真正的大头。
 
 ## 功能
 
-- **概览**：磁盘用量 + 按类别的环形图（系统、软件、开发工具与缓存、应用数据、个人文件、项目、虚拟内存/休眠、
-  系统保留区），鼠标移上去解释每一类是什么。
-- **智能清理**：分组列出可清理的内容，每项都写明是什么、删了有什么影响，并标注「安全 / 谨慎 / 需确认」。
-  默认只勾选安全项；清理后显示实际释放的空间和可用空间变化。
-  - 系统垃圾：临时文件（只删 1 天前的）、Windows 更新缓存、崩溃转储、着色器缓存、回收站
-  - 开发缓存：Gradle 日志/依赖、npm/bun/pip/yarn/Go 缓存、cargo 缓存、旧版 Gradle、没被模拟器使用的
-    Android 系统镜像、模拟器快照、旧版本 IDE 缓存、VS Code/Cursor 缓存、AI 插件索引、
-    30 天未改动项目的 node_modules / target / build
-  - 应用缓存：Chrome / Edge 缓存（不动书签、密码、登录状态）
-  - 需要确认：闲置的 Git worktree（`git worktree remove`，分支保留）、60 天没用的模拟器、关闭休眠
-  - 只给指引：微信、QQ 音乐、Claude、下载文件夹、虚拟内存——这些直接删文件夹会出问题，只告诉你在哪清
-- **应用管理**：列出桌面程序（注册表 64/32 位视图和当前用户安装的）和商店应用，显示实测的程序大小、
-  它在 AppData 等处存的数据大小、上次使用时间（系统的启动记录 UserAssist + 数据文件夹的活动时间）。
-  超过 3 个月没用的大应用会被标成「建议卸载」，运行库和驱动会提示不要随便卸。卸载时运行应用自带的卸载程序
-  （MSI 用 msiexec，商店应用用系统自带的移除命令），等它从已安装列表里消失后，检查并提供清理用户目录里的残留数据。
-- **空间分析**：可逐层点进去的矩形树图 + 按大小排序的列表。
-- **文件整理**：
-  - 下载文件夹：找出已经装过的软件的安装包、已经解压过的压缩包、3 个月没动的大文件；
-  - 重复文件：在用户目录里按「大小 → 头尾 64 KB → 完整 BLAKE3」三步比对，跳过 AppData、工具目录、
-    代码仓库和 OneDrive 云端文件；「智能选择」每组保留一份，微信 / QQ 聊天文件受保护；
-  - 大文件：超过 100 MB 的文件，按类型筛选。
-  删除默认进回收站，也可以选择直接删除。
-- **搬家与压缩**：
-  - 搬到其他盘：Gradle 缓存、Android SDK / 模拟器、JetBrains 缓存、微信聊天文件、QQ 音乐、用户目录下的大项目文件夹。
-    用 robocopy 完整复制并逐个核对后，原位置换成目录联接（junction），软件照原路径访问；下载、文档、图片、视频、
-    音乐用 Windows 的「位置」机制（SHSetKnownFolderPath）改。搬之前检查相关程序是否在运行、先试探文件夹是否被占用，
-    出错自动撤销；每次搬家都有记录，可以一键搬回。
-    界面按类型分组、可多选，顶部实时显示 C 盘 / 目标盘搬完后的可用空间，多项按顺序逐个搬并给出每项的结果；
-    被程序占用的项可以「重新检查」（`migration_status` 不测大小，瞬间返回）。
-  - 压缩虚拟磁盘：找出 WSL（注册表 Lxss）、Docker、Claude 和扫描到的其他 .vhdx，WSL 先在发行版里 fstrim 再
-    `wsl --shutdown`，然后用 diskpart（管理员）compact。
-- **空间变化**：每次扫描保存一份快照（总量、各类别、所有 50 MB 以上的文件夹，每个盘保留 30 次），
-  画出已用空间的趋势，和任意一次历史扫描对比哪些文件夹变大 / 变小。启动时如果 24 小时内扫描过，直接显示上次结果。
-- **开机启动**：注册表 Run（当前用户 / 所有用户 / 32 位）、两个「启动」文件夹、应用商店应用的启动任务。
-  开关写的是 `Explorer\StartupApproved` 里的标记（商店应用写 `State`），和任务管理器「启动应用」是同一个设置，
-  不删除任何东西；所有用户的项通过管理员授权的 reg.exe 修改。按规则给出「可以关掉」（自动更新程序、游戏平台、
-  音乐 / 网盘客户端、Edge 启动加速等）和「建议保留」（系统组件、驱动配套程序、安全软件、输入法），程序文件已不存在的会标出来。
-- **性能**：仿任务管理器的性能页，每秒采样，60 秒历史。计数器用 PDH 的英文名（`PdhAddEnglishCounterW`），
-  中文系统上也能用；CPU 用 `% Processor Utility`（和任务管理器一致），磁盘 / 网络 / GPU 引擎同样走 PDH，
-  内存走 GlobalMemoryStatusEx + GetPerformanceInfo，显卡名称和 LUID 来自 DXGI，硬件型号（CPU 缓存、内存频率、
-  磁盘型号、网卡）由一次 CIM 查询得到并缓存。下方列出按程序合并的进程（CPU / 内存），可以结束任务，Windows 必需的进程会被拒绝。
-- **窗口定位**：点「选择窗口」（或托盘菜单「查找窗口所属程序…」）后 DiskMate 最小化，鼠标下的窗口被框出并显示程序名，
-  单击选定，Esc / 右键取消。选中后显示进程名、PID、图标、发行商、文件位置、命令行、启动时间、专用内存、线程数、父进程、
-  是否以管理员身份运行，可以打开文件位置、切换到该窗口、结束这一个进程。应用商店应用的窗口由 ApplicationFrameHost 托管，
-  会找到应用自己的进程。实现：低级鼠标 / 键盘钩子吞掉选定那一下点击（不会点到目标窗口里），高亮框是几个点击穿透的置顶分层窗口，
-  悬停靠 30 ms 定时器轮询鼠标位置。安全：60 秒没选自动取消；钩子自己检查截止时间，选择循环万一卡住也不再拦截输入。
+| | 功能 | 能帮你做什么 |
+|---|---|---|
+| 📊 | **概览** | 磁盘按类别分账：系统、软件、开发工具与缓存、应用数据、个人文件、虚拟内存 / 休眠……鼠标移上去解释每一类是什么 |
+| 🧹 | **智能清理** | 系统垃圾、开发缓存、浏览器缓存、旧版 IDE 数据、闲置 worktree 等，分组列出，逐项说明影响，清理后显示实际释放了多少 |
+| 📦 | **应用管理** | 每个应用的程序大小 + 它藏在 AppData 里的数据大小 + 上次使用时间；调用自带卸载程序，卸完再帮你清掉残留 |
+| 🗂️ | **空间分析** | 可逐层点进去的矩形树图；**空间变化**页对比历史扫描，找出最近谁在长 |
+| 🧾 | **文件整理** | 下载文件夹里装过的安装包、解压过的压缩包；按内容比对的重复文件；超过 100 MB 的大文件。删除默认进回收站 |
+| 🚚 | **搬家与压缩** | 把微信聊天文件、Android SDK、Gradle 缓存等大文件夹搬到 D 盘，原路径留下链接，**软件不用改任何设置**；压缩 WSL / Docker 的 .vhdx |
+| ⚡ | **开机启动** | 列出所有开机启动项，标注「可以关掉 / 建议保留」和理由；开关和任务管理器是同一个设置，随时可以改回来 |
+| 📈 | **性能** | 仿任务管理器的实时性能页：CPU（每个核心）、内存、磁盘、网络、GPU 曲线，以及正在占用资源的程序 |
+| 🎯 | **窗口定位** | 点一下屏幕上任意窗口，立刻知道它是哪个程序、文件放在哪、命令行是什么，可以一键打开文件位置 |
 
-## 资源占用
+## 截图
 
-- 扫描、测量、查重用的线程池只有 `逻辑核数 / 4`（2–6 个）线程，并处于 Windows 的后台模式（CPU、磁盘、内存优先级都最低）。
-  实测遍历目录在 4 个线程左右就不再变快，20 个线程只是多烧 CPU：完整扫描 C: 用 20 线程 97–136 CPU 秒，4 线程 68–75 CPU 秒，用时相近。
-- PowerShell、robocopy 等子进程以「低于正常」优先级启动。
-- 扫描结束、算完分类和历史快照后，小于 1 MB 的文件夹并入上级的「零散文件和小文件夹」，C: 盘常驻的节点从约 49 万个降到约 3.4 万个。
-- 窗口最小化时让 WebView2 降低内存目标（`ICoreWebView2_19::SetMemoryUsageTargetLevel`），离开性能页时关闭性能计数器。
-- 慢的查询结果记在数据目录的 `cache/` 下，页面先显示上次的结果再在后台刷新：商店应用列表（PowerShell 约 3 秒）、程序图标 / 描述 /
-  发行商（按文件修改时间和大小判断是否变了）、应用大小（30 分钟内的不重测）、开机启动里的商店应用信息、硬件信息、搬家候选的大小。
-  实测切到应用管理 / 开机启动 / 文件整理 / 搬家都在 0.3 秒内出列表（第一次没有缓存时应用管理约 3.7 秒）。
-  自动测量应用大小用单独的 2 线程后台线程池，不占用户正在等的操作所用的线程池；快速查询（搬家状态、开机启动列表）不进线程池。
-- 托盘：第一次关窗口时问一次「保留在托盘 / 直接退出」并记住（托盘右键菜单可改）。保留在托盘时窗口和 WebView2 真正关掉，
-  只剩主进程（实测约 42 MB，开着窗口约 330 MB），点托盘图标再新建窗口；扫描结果等后端状态保留。托盘提示和菜单里的
-  系统盘可用空间在鼠标移到图标上时读取，没有后台定时器。单实例：再次启动会唤出已运行的窗口。不添加开机启动。
+<table>
+  <tr>
+    <td><img src="docs/screenshots/cleanup-light.webp" alt="智能清理"><p align="center">智能清理：每项写清影响，默认只勾安全项</p></td>
+    <td><img src="docs/screenshots/apps-light.webp" alt="应用管理"><p align="center">应用管理：程序 + 数据大小、上次使用时间</p></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/move-light.webp" alt="搬家"><p align="center">搬家：勾选后实时显示两边的可用空间</p></td>
+    <td><img src="docs/screenshots/explorer-light.webp" alt="空间分析"><p align="center">空间分析：矩形树图逐层点进去</p></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/startup-light.webp" alt="开机启动"><p align="center">开机启动：给出建议和理由</p></td>
+    <td><img src="docs/screenshots/finder-light.webp" alt="窗口定位"><p align="center">窗口定位：点一下窗口找到程序文件</p></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/perf-dark.webp" alt="性能（深色）"><p align="center">性能：实时曲线，跟随系统深色模式</p></td>
+    <td><img src="docs/screenshots/overview-dark.webp" alt="概览（深色）"><p align="center">深色模式</p></td>
+  </tr>
+</table>
+
+## 下载安装
+
+1. 到 [Releases](https://github.com/cjxhaaa/diskmate/releases/latest) 下载 `DiskMate_x.y.z_x64-setup.exe`；
+2. 双击安装。装在当前用户下，**不需要管理员权限**；
+3. 支持 Windows 10（1809 及以上）和 Windows 11，64 位。界面用系统自带的 WebView2，Windows 11 已内置，Windows 10 缺少时安装程序会自动补上。
+
+> [!NOTE]
+> 安装包暂未做代码签名，Windows SmartScreen 可能提示「已保护你的电脑」。点「更多信息 → 仍要运行」即可。也可以[从源码构建](#从源码构建)。
 
 ## 安全设计
 
-- 前端只能按 id 选择后端分析出来的项目，不能传任意路径去删。
-- 每个要删除的路径都要通过白名单检查（`clean::allowed`）：必须在用户目录或几个已知的系统缓存目录之内，
-  且不能是用户目录、AppData、文档、桌面、下载这些根目录本身。
-- 所有文件操作走 `\\?\` 长路径，不会因为路径超过 260 字符删一半。
-- 正在使用的文件跳过不报错；释放的空间按实际删掉的文件累计。
-- 大文件页不允许删除 AppData 和 `.android` / `.gradle` 这类工具目录里的单个文件。
+清理工具最怕删错。DiskMate 的做法：
 
-## 开发
+- **只删分析出来的项目**：界面只能按编号选择后端分析出的项目，不能传任意路径去删；每个路径都要过白名单（必须在用户目录或已知的缓存目录里，且不能是 AppData、文档、桌面这类根目录本身）。
+- **能进回收站就进回收站**：文件整理、重复文件、大文件默认都进回收站。
+- **聊天记录受保护**：微信、QQ 的聊天文件只给指引、不批量删，重复文件里也不会被「智能选择」选中。
+- **搬家先复制、再核对、最后才删原件**：任何一步出错都会自动撤销，原文件不动；每次搬家都有记录，可以一键搬回。
+- **需要管理员的操作会单独弹授权**（压缩虚拟磁盘、修改「所有用户」的启动项），平时不以管理员身份运行。
+
+## 轻量
+
+- 安装包 **2.6 MB**；关窗口后可以留在托盘，此时只占 **约 42 MB 内存**（窗口开着约 330 MB，大头是界面用的 WebView2）。
+- 扫描、测量等后台工作只用 2–6 个线程，并处于 Windows 的后台模式（CPU、磁盘、内存优先级都最低），不和你正在用的程序抢资源。
+- 不添加开机启动，没有后台服务，也没有定时任务。
+- 扫描一块 200 多万个文件的系统盘约 15–20 秒；常用页面先显示上次的结果再在后台刷新，切页约 0.3 秒。
+
+## 常见问题
+
+<details>
+<summary><b>会不会删掉我需要的东西？</b></summary>
+
+默认只勾选「安全」的项目，比如临时文件（只删 1 天前的）、各种可以重新下载的缓存。「谨慎」和「需确认」的项目需要你自己勾选，每项都写了删掉的后果。微信、QQ 音乐这类直接删文件夹会出问题的，只告诉你在应用里怎么清。
+
+</details>
+
+<details>
+<summary><b>「搬家」之后软件还能正常用吗？</b></summary>
+
+能。文件完整复制到新磁盘并逐个核对后，原位置会换成一个指向新位置的目录链接（junction），软件按原来的路径照常读写。「下载」「文档」这类系统文件夹则直接用 Windows 自带的「位置」功能改到新磁盘。搬之前会检查相关程序有没有在运行。
+
+</details>
+
+<details>
+<summary><b>为什么扫描结果比磁盘「已用空间」小？</b></summary>
+
+没有管理员权限读不到的目录（如 `System Volume Information`）、NTFS 元数据、还原点等会归入「系统保留区」。DiskMate 按文件**实际占用**计算：OneDrive 仅在线的占位文件不算，压缩 / 稀疏文件按实际大小，硬链接只算一次。
+
+</details>
+
+<details>
+<summary><b>数据存在哪里？卸载干净吗？</b></summary>
+
+扫描历史、缓存和设置都在 `%LOCALAPPDATA%\com.cjxhaaa.diskmate`。卸载时可以勾选一起删除。DiskMate 不写注册表启动项，也不安装服务。
+
+</details>
+
+<details>
+<summary><b>杀毒软件 / SmartScreen 提示风险？</b></summary>
+
+安装包未签名，新发布的程序在 SmartScreen 那里还没有「信誉」，所以会提示。源代码完全公开，可以自己审阅后从源码构建。
+
+</details>
+
+## 从源码构建
+
+需要 [Node.js](https://nodejs.org/) 20+、[Rust](https://rustup.rs/) 稳定版和 Visual Studio C++ 生成工具。
 
 ```bash
+git clone https://github.com/cjxhaaa/diskmate.git
+cd diskmate
 npm install
 npm run tauri dev      # 开发模式
-npm run tauri build    # 生成 src-tauri/target/release/bundle/nsis/DiskMate_*_x64-setup.exe
+npm run tauri build    # 生成安装包：src-tauri/target/release/bundle/nsis/
 ```
 
-只看界面不需要 Rust：`npm run dev` 后在浏览器打开 http://127.0.0.1:1430，会用 `src/mock.ts` 的假数据。
+只改界面不需要 Rust：`npm run dev` 后在浏览器打开 http://127.0.0.1:1430 ，会用 `src/mock.ts` 的示例数据。
 
-测试：
+实现细节（扫描怎么算准、各页面的数据来源、资源占用的优化、测试方法）见 [docs/TECHNICAL.md](docs/TECHNICAL.md)。
 
-```bash
-cd src-tauri
-cargo test                                         # 单元测试
-cargo test --release real_scan -- --ignored --nocapture      # 只读：扫描本机系统盘
-cargo test --release real_analysis -- --ignored --nocapture  # 只读：分析本机可清理内容
-cargo test --release real_startup -- --ignored --nocapture   # 只读：列出本机启动项
-cargo test --release real_perf -- --ignored --nocapture      # 只读：硬件信息、一次性能采样和进程
-cargo test --release real_toggle -- --ignored --nocapture    # 建一个临时 Run 项，关 / 开后删掉
-cargo test --release real_pick -- --ignored --nocapture      # 不动鼠标，模拟点选任务栏并取消一次
-```
+## 路线图
 
-## 已知限制
+- [ ] 英文界面
+- [ ] 应用内检查更新
+- [ ] 代码签名
+- [ ] 定期提醒：C 盘可用空间低于阈值时提示
+- [ ] 通过 winget / Scoop 安装
 
-- 扫描用普通权限，`System Volume Information` 等目录读不到，计入「系统保留区」。
-- 只对 8 MB 以上的硬链接文件去重；`C:\Windows\WinSxS` 里的小文件硬链接会被重复计算，
-  所以「Windows 系统」一项会偏大一些。
+有想法或遇到问题，欢迎[提 Issue](https://github.com/cjxhaaa/diskmate/issues/new/choose)。
+
+## 致谢
+
+思路参考了 [WizTree](https://diskanalyzer.com/) / [TreeSize](https://www.jam-software.com/treesize_free)（空间分析）、CCleaner 与各类电脑管家（分类清理）、[npkill](https://github.com/voidcosmos/npkill) / [kondo](https://github.com/tbillington/kondo)（开发者构建产物）。基于 [Tauri](https://tauri.app/)、[React](https://react.dev/) 和 [Lucide](https://lucide.dev/) 图标构建。
+
+## 许可证
+
+[MIT](LICENSE)

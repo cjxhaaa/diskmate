@@ -739,7 +739,7 @@ mod real_move {
 
         std::fs::remove_dir_all(&src).unwrap();
         // The empty parents created on D: for the mirrored path.
-        let _ = std::fs::remove_dir(PathBuf::from(r"D:\Users\40501"));
+        let _ = std::fs::remove_dir(target_for(&home(), r"D:\"));
         let _ = std::fs::remove_dir(PathBuf::from(r"D:\Users"));
         println!("round trip ok");
     }

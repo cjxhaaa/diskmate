@@ -26,7 +26,7 @@ function signed(bytes: number): string {
   return `${bytes > 0 ? "+" : "−"}${formatBytes(Math.abs(bytes))}`;
 }
 
-/** `C:\Users\40501\xwechat_files` → `~\xwechat_files`: the home prefix is the same on every row. */
+/** `C:\Users\me\xwechat_files` → `~\xwechat_files`: the home prefix is the same on every row. */
 function short(path: string): string {
   return path.replace(/^[a-z]:\\users\\[^\\]+/i, "~");
 }

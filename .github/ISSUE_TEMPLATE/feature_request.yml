@@ -1,0 +1,19 @@
+name: 功能建议 / Feature request
+description: 希望 DiskMate 能做到的事
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 遇到的问题
+      description: 现在哪里不方便？比如「C 盘里 XX 文件夹很大，但不知道能不能删」
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: 希望怎么解决
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 其他软件是怎么做的（可选）
