@@ -19,7 +19,7 @@ Windows 磁盘分析与清理工具 · 开源免费 · 安装包 2.6 MB · 不�
 [常见问题](#常见问题) ·
 [English](README.en.md)
 
-<a href="#介绍视频"><img src="docs/media/teaser-move.webp" width="880" alt="DiskMate 把微信聊天文件和游戏引擎搬到 D 盘，C 盘多出 46 GB"></a>
+<img src="docs/screenshots/overview-light.webp" width="880" alt="DiskMate 概览">
 
 <sub>▶ 1 分钟完整介绍视频（有声音）在<a href="#介绍视频">下方</a></sub>
 
@@ -60,9 +60,6 @@ DiskMate 的想法很简单：
 ## 截图
 
 <table>
-  <tr>
-    <td colspan="2"><img src="docs/screenshots/overview-light.webp" alt="概览"><p align="center">概览：每个 GB 按类别分账</p></td>
-  </tr>
   <tr>
     <td><img src="docs/screenshots/cleanup-light.webp" alt="智能清理"><p align="center">智能清理：每项写清影响，默认只勾安全项</p></td>
     <td><img src="docs/screenshots/apps-light.webp" alt="应用管理"><p align="center">应用管理：程序 + 数据大小、上次使用时间</p></td>
