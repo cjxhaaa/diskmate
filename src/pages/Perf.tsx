@@ -57,14 +57,15 @@ function Chart({
   color,
   format,
   label,
-  height = 200,
+  grow = 1,
 }: {
   series: Series[];
   max: number;
   color: string;
   format: (v: number) => string;
   label: string;
-  height?: number;
+  /** Share of the detail card's free height, against the other graphs in the same view. */
+  grow?: number;
 }) {
   const W = 600;
   const H = 200;
@@ -80,7 +81,7 @@ function Chart({
   const left = hover !== null ? `${(1 - hover / (HISTORY - 1)) * 100}%` : "0";
 
   return (
-    <div className="chart">
+    <div className="chart" style={{ flexGrow: grow }}>
       <div className="chart-top">
         <span>{label}</span>
         {series.length > 1 && (
@@ -99,7 +100,7 @@ function Chart({
       </div>
       <div
         className="chart-plot"
-        style={{ height, "--c": color } as CSSProperties}
+        style={{ "--c": color } as CSSProperties}
         onMouseMove={(e) => {
           const r = e.currentTarget.getBoundingClientRect();
           const f = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
@@ -156,16 +157,24 @@ function Chart({
   );
 }
 
-function Spark({ values, max, color }: { values: number[]; max: number; color: string }) {
+function Spark({ values, max, color, fill }: { values: number[]; max: number; color: string; fill?: boolean }) {
   const W = 64;
   const H = 40;
   const pts = values.map((v, i) => `${(W - (values.length - 1 - i) * (W / (HISTORY - 1))).toFixed(1)},${(H - (Math.min(v, max) / max) * (H - 2) - 1).toFixed(1)}`);
   return (
-    <svg className="spark" width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ borderColor: color }} aria-hidden>
+    <svg
+      className="spark"
+      width={W}
+      height={H}
+      viewBox={`0 0 ${W} ${H}`}
+      preserveAspectRatio={fill ? "none" : undefined}
+      style={{ borderColor: color }}
+      aria-hidden
+    >
       {pts.length > 1 && (
         <>
           <polygon points={`${pts.join(" ")} ${W},${H} ${pts[0].split(",")[0]},${H}`} fill={color} opacity="0.15" />
-          <polyline points={pts.join(" ")} fill="none" stroke={color} strokeWidth="1.5" />
+          <polyline points={pts.join(" ")} fill="none" stroke={color} strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
         </>
       )}
     </svg>
@@ -309,7 +318,7 @@ function Detail({ r, history, hw }: { r: Resource; history: PerfSample[]; hw: Ha
           <div className="perf-cores" style={{ gridTemplateColumns: `repeat(${coreColumns(s.cores.length)}, 1fr)` }}>
             {s.cores.map((v, i) => (
               <div key={i} className="perf-core" title={`处理器 ${i}：${pct(v)}`}>
-                <Spark values={history.map((h) => h.cores[i] ?? 0)} max={100} color={color} />
+                <Spark values={history.map((h) => h.cores[i] ?? 0)} max={100} color={color} fill />
                 <span className="num faint">{pct(v)}</span>
               </div>
             ))}
@@ -390,7 +399,7 @@ function Detail({ r, history, hw }: { r: Resource; history: PerfSample[]; hw: Ha
     const writes = history.map((h) => pick(h)?.write ?? 0);
     return (
       <>
-        <Chart label="活动时间 %" series={[{ name: "活动时间", values: history.map((h) => pick(h)?.active ?? 0) }]} max={100} color={color} format={pct} height={150} />
+        <Chart label="活动时间 %" series={[{ name: "活动时间", values: history.map((h) => pick(h)?.active ?? 0) }]} max={100} color={color} format={pct} grow={3} />
         <Chart
           label="传输速率"
           series={[
@@ -400,7 +409,7 @@ function Detail({ r, history, hw }: { r: Resource; history: PerfSample[]; hw: Ha
           max={niceMax(Math.max(...reads, ...writes), 1024 * 1024)}
           color={color}
           format={rate}
-          height={120}
+          grow={2}
         />
         <div className="perf-stats">
           <Stat label="活动时间" value={pct(cur?.active ?? 0)} />
@@ -508,6 +517,7 @@ function Processes() {
   const [details, setDetails] = useState<Record<string, FileDetails>>({});
   const asked = useRef(new Set<string>());
   const [kill, setKill] = useState<ProcGroup | null>(null);
+  const smooth = useRef(new Map<string, { cpu: number; memory: number }>());
   const [killing, setKilling] = useState(false);
 
   useEffect(() => {
@@ -518,7 +528,18 @@ function Processes() {
       running = true;
       api
         .perfProcesses()
-        .then((p) => alive && setProcs(p))
+        .then((p) => {
+          if (!alive) return;
+          // Rows are ordered by a running average: the numbers shown stay live, but a program
+          // only changes places when its use really changes, not on every 2-second blip.
+          const next = new Map<string, { cpu: number; memory: number }>();
+          for (const g of p) {
+            const old = smooth.current.get(g.name);
+            next.set(g.name, old ? { cpu: old.cpu * 0.7 + g.cpu * 0.3, memory: old.memory * 0.5 + g.memory * 0.5 } : { cpu: g.cpu, memory: g.memory });
+          }
+          smooth.current = next;
+          setProcs(p);
+        })
         .catch(() => undefined)
         .finally(() => (running = false));
     };
@@ -530,10 +551,15 @@ function Processes() {
     };
   }, []);
 
-  const top = useMemo(
-    () => [...(procs ?? [])].sort((a, b) => (sort === "cpu" ? b.cpu - a.cpu || b.memory - a.memory : b.memory - a.memory)).slice(0, 12),
-    [procs, sort],
-  );
+  const top = useMemo(() => {
+    const key = (p: ProcGroup) => smooth.current.get(p.name) ?? { cpu: p.cpu, memory: p.memory };
+    return [...(procs ?? [])]
+      .sort((a, b) => {
+        const [x, y] = [key(a), key(b)];
+        return sort === "cpu" ? y.cpu - x.cpu || y.memory - x.memory : y.memory - x.memory;
+      })
+      .slice(0, 12);
+  }, [procs, sort]);
 
   // Icons and readable names for programs not looked up yet.
   useEffect(() => {
@@ -715,7 +741,9 @@ export function Perf() {
                   {current.model || (hw ? "" : "正在读取硬件信息…")}
                 </span>
               </div>
-              <Detail key={current.id} r={current} history={history} hw={hw} />
+              <div className="perf-body">
+                <Detail key={current.id} r={current} history={history} hw={hw} />
+              </div>
             </div>
           )}
         </div>
