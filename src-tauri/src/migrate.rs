@@ -237,7 +237,15 @@ pub fn candidates(dir: &Path, measure_sizes: bool) -> Vec<Candidate> {
             measured,
         }
     };
-    let folders = project_folders(&known_paths);
+    let mut folders = project_folders(&known_paths);
+    // A moved project folder is a link now, which project_folders skips; list it from its record
+    // so it shows under "already moved" and can be moved back.
+    for r in moved.iter().filter(|r| r.id.starts_with("folder:")) {
+        let p = PathBuf::from(&r.source);
+        if !folders.contains(&p) {
+            folders.push(p);
+        }
+    }
     let make_project = |p: &PathBuf| {
         let id = format!("folder:{}", display(p).to_lowercase());
         let rec = moved.iter().find(|r| r.id == id);
@@ -611,6 +619,34 @@ fn gb(b: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A moved project folder is a junction, which the folder scan skips; its record must still
+    /// put it under "already moved".
+    #[test]
+    fn moved_project_folders_stay_listed() {
+        let store = tempfile::tempdir().unwrap();
+        let source = r"C:\Users\nobody\some-project";
+        let target = r"D:\Users\nobody\some-project";
+        save_records(
+            store.path(),
+            &[Record {
+                id: format!("folder:{}", source.to_lowercase()),
+                source: source.into(),
+                target: target.into(),
+                method: Method::Junction,
+                size: 2 << 30,
+                moved_at: 0,
+            }],
+        )
+        .unwrap();
+        let list = candidates(store.path(), false);
+        let c = list
+            .iter()
+            .find(|c| c.path == source)
+            .expect("moved folder is listed");
+        assert_eq!(c.moved_to.as_deref(), Some(target));
+        assert_eq!(c.size, 2 << 30);
+    }
 
     #[test]
     fn targets_mirror_the_source_path() {
