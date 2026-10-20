@@ -798,7 +798,9 @@ button {
 
 .footer-bar {
   position: sticky;
-  bottom: 0;
+  /* Sticky insets count from inside the page's 32px padding; -32px puts the bar on the window's
+     bottom edge. With 0 it stuck 32px higher and covered the end of the list. */
+  bottom: -32px;
   margin: 0 -32px -32px;
   padding: 14px 32px;
   background: color-mix(in srgb, var(--bg) 82%, transparent);
@@ -1244,6 +1246,14 @@ button {
   background: var(--bg-elev);
   color: var(--text);
   box-shadow: var(--shadow-sm);
+}
+.tab-count {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--safe-soft);
+  color: var(--safe);
+  font-size: 12px;
 }
 .panel-head {
   display: flex;

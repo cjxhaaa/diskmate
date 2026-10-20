@@ -21,7 +21,7 @@ import { Dialog } from "../components/ui";
 import { formatBytes } from "../format";
 import { useStore } from "../store";
 
-type Tab = "move" | "vdisk";
+type Tab = "move" | "moved" | "vdisk";
 
 const GB = 1024 ** 3;
 
@@ -108,7 +108,7 @@ function DriveTile({
   );
 }
 
-function MovePanel() {
+function MovePanel({ view, onMovedCount }: { view: "move" | "moved"; onMovedCount: (n: number) => void }) {
   const { drives, toast, refreshDrives } = useStore();
   const system = drives.find((d) => d.isSystem);
   const targets = useMemo(() => drives.filter((d) => !d.isSystem).sort((a, b) => b.free - a.free), [drives]);
@@ -210,6 +210,9 @@ function MovePanel() {
   const all = list ?? [];
   const pending = all.filter((c) => !c.movedTo);
   const moved = all.filter((c) => c.movedTo);
+  useEffect(() => {
+    if (list !== null) onMovedCount(moved.length);
+  }, [list, moved.length, onMovedCount]);
   const chosen = pending.filter((c) => selected.has(c.id) && c.measured && c.blockers.length === 0);
   const chosenBytes = chosen.reduce((s, c) => s + c.size, 0);
   const free = targetDrive?.free ?? 0;
@@ -247,7 +250,7 @@ function MovePanel() {
     if (done) load();
   };
 
-  if (!targets.length) {
+  if (!targets.length && view === "move") {
     return (
       <div className="card empty">
         <div className="empty-icon">
@@ -305,154 +308,172 @@ function MovePanel() {
     );
   };
 
+  const movedView =
+    list === null ? (
+      [0, 1].map((i) => <div key={i} className="skeleton" style={{ height: 76, marginBottom: 8, borderRadius: 14 }} />)
+    ) : moved.length ? (
+      <>
+        <div className="move-list-head">
+          <span className="muted">
+            {moved.length} 个文件夹在其他盘上，原路径照常可用；搬回 C 盘会先复制回来、核对无误再删掉新位置的副本
+          </span>
+        </div>
+        <section className="group">
+            {moved.map((c) => (
+              <div key={c.id} className="item move-pick moved has-action">
+                <span />
+                <div className="move-icon" style={{ background: "var(--safe-soft)", color: "var(--safe)" }}>
+                  <CircleCheck size={18} />
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div className="item-title">
+                    {c.title}
+                    <span className="badge safe">已搬到 {letter(c.movedTo?.slice(0, 3))}</span>
+                  </div>
+                  <div className="move-route" title={`${c.path} → ${c.movedTo}`}>
+                    <span>{c.path}</span>
+                    <ArrowRight size={12} style={{ flex: "none" }} />
+                    <span className="to">{c.movedTo}</span>
+                  </div>
+                </div>
+                <div className="item-size num">{formatBytes(c.size)}</div>
+                <button className="btn" onClick={() => setConfirm({ restore: c })}>
+                  <Undo2 size={15} /> 搬回 C 盘
+                </button>
+              </div>
+            ))}
+        </section>
+      </>
+    ) : (
+      <div className="card empty">
+        <div className="empty-icon">
+          <FolderSymlink size={30} />
+        </div>
+        <div>还没有搬走的文件夹。在「搬到其他盘」里搬过的都会列在这里，随时可以搬回 C 盘。</div>
+      </div>
+    );
+
   return (
     <>
-      <div className="card move-hero">
-        <div className="move-hero-drives">
-          <DriveTile title="从" drive={system} change={-chosenBytes} tone="out" />
-          <div className="move-hero-arrow">
-            <div className="move-hero-arrow-icon">
-              <Truck size={18} />
-            </div>
-            <span className="num">{chosenBytes ? formatBytes(chosenBytes) : "勾选下方"}</span>
-          </div>
-          <DriveTile title="搬到" drive={targetDrive} change={chosenBytes} tone="in">
-            {targets.length > 1 ? (
-              <div className="drive-tabs">
-                {targets.map((d) => (
-                  <button key={d.root} className={`drive-tab ${drive === d.root ? "active" : ""}`} onClick={() => setDrive(d.root)}>
-                    <HardDrive size={14} />
-                    {letter(d.root)}
-                  </button>
-                ))}
-              </div>
-            ) : undefined}
-          </DriveTile>
-        </div>
-        <div className="move-steps">
-          {[
-            ["完整复制", `先把整个文件夹复制到 ${letter(drive)}`],
-            ["逐个核对", "文件数和大小一一对上才继续"],
-            ["原位置换成链接", "软件照旧按原路径读写，不用改设置"],
-            ["删除 C 盘原件", "这一步之前出错都会自动撤销"],
-          ].map(([t, d], i) => (
-            <div key={t} className="move-step">
-              <span className="move-step-num">{i + 1}</span>
-              <div>
-                <b>{t}</b>
-                {d}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="move-list-head">
-        <span className="muted">
-          {list === null ? "正在读取…" : measuring ? "正在测量各个文件夹的大小，大约需要十几秒…" : `找到 ${pending.length} 个可以搬的文件夹`}
-        </span>
-        <button className="btn btn-ghost" onClick={load} disabled={measuring}>
-          {measuring ? <span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> : <RefreshCw size={14} />}
-          重新测量
-        </button>
-      </div>
-
-      {list === null &&
-        [0, 1, 2].map((i) => <div key={i} className="skeleton" style={{ height: 76, marginBottom: 8, borderRadius: 14 }} />)}
-
-      {list !== null &&
-        GROUPS.map((g) => {
-          const rows = pending.filter((c) => c.group === g.key);
-          const shown = g.key === "project" ? rows.filter((c) => c.measured) : rows;
-          const looking = g.key === "project" && rows.some((c) => !c.measured);
-          if (!shown.length && !looking) return null;
-          const groupBytes = shown.reduce((s, c) => s + c.size, 0);
-          return (
-            <section key={g.key} className="group">
-              <div className="group-head">
-                <span className="group-title">{g.title}</span>
-                <span className="faint" style={{ fontSize: 13 }}>
-                  {g.hint}
-                </span>
-                {groupBytes > 0 && <span className="group-size num">{formatBytes(groupBytes)}</span>}
-              </div>
-              {shown.map(row)}
-              {looking && (
-                <div className="move-looking">
-                  <span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} />
-                  正在查找 1 GB 以上的文件夹…
+      {view === "moved" ? (
+        movedView
+      ) : (
+        <>
+          <div className="card move-hero">
+            <div className="move-hero-drives">
+              <DriveTile title="从" drive={system} change={-chosenBytes} tone="out" />
+              <div className="move-hero-arrow">
+                <div className="move-hero-arrow-icon">
+                  <Truck size={18} />
                 </div>
-              )}
-            </section>
-          );
-        })}
-
-      {list !== null && !measuring && pending.length === 0 && (
-        <div className="card empty">
-          <div className="empty-icon">
-            <CircleCheck size={30} />
+                <span className="num">{chosenBytes ? formatBytes(chosenBytes) : "勾选下方"}</span>
+              </div>
+              <DriveTile title="搬到" drive={targetDrive} change={chosenBytes} tone="in">
+                {targets.length > 1 ? (
+                  <div className="drive-tabs">
+                    {targets.map((d) => (
+                      <button key={d.root} className={`drive-tab ${drive === d.root ? "active" : ""}`} onClick={() => setDrive(d.root)}>
+                        <HardDrive size={14} />
+                        {letter(d.root)}
+                      </button>
+                    ))}
+                  </div>
+                ) : undefined}
+              </DriveTile>
+            </div>
+            <div className="move-steps">
+              {[
+                ["完整复制", `先把整个文件夹复制到 ${letter(drive)}`],
+                ["逐个核对", "文件数和大小一一对上才继续"],
+                ["原位置换成链接", "软件照旧按原路径读写，不用改设置"],
+                ["删除 C 盘原件", "这一步之前出错都会自动撤销"],
+              ].map(([t, d], i) => (
+                <div key={t} className="move-step">
+                  <span className="move-step-num">{i + 1}</span>
+                  <div>
+                    <b>{t}</b>
+                    {d}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
-          <div>没有找到值得搬的大文件夹</div>
-        </div>
-      )}
 
-      {moved.length > 0 && (
-        <section className="group">
-          <div className="group-head">
-            <span className="group-title">已经搬走的</span>
-            <span className="faint" style={{ fontSize: 13 }}>
-              文件实际存在新位置；原路径仍可访问
+          <div className="move-list-head">
+            <span className="muted">
+              {list === null ? "正在读取…" : measuring ? "正在测量各个文件夹的大小，大约需要十几秒…" : `找到 ${pending.length} 个可以搬的文件夹`}
             </span>
+            <button className="btn btn-ghost" onClick={load} disabled={measuring}>
+              {measuring ? <span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> : <RefreshCw size={14} />}
+              重新测量
+            </button>
           </div>
-          {moved.map((c) => (
-            <div key={c.id} className="item move-pick moved has-action">
-              <span />
-              <div className="move-icon" style={{ background: "var(--safe-soft)", color: "var(--safe)" }}>
-                <CircleCheck size={18} />
+
+          {list === null &&
+            [0, 1, 2].map((i) => <div key={i} className="skeleton" style={{ height: 76, marginBottom: 8, borderRadius: 14 }} />)}
+
+          {list !== null &&
+            GROUPS.map((g) => {
+              const rows = pending.filter((c) => c.group === g.key);
+              const shown = g.key === "project" ? rows.filter((c) => c.measured) : rows;
+              const looking = g.key === "project" && rows.some((c) => !c.measured);
+              if (!shown.length && !looking) return null;
+              const groupBytes = shown.reduce((s, c) => s + c.size, 0);
+              return (
+                <section key={g.key} className="group">
+                  <div className="group-head">
+                    <span className="group-title">{g.title}</span>
+                    <span className="faint" style={{ fontSize: 13 }}>
+                      {g.hint}
+                    </span>
+                    {groupBytes > 0 && <span className="group-size num">{formatBytes(groupBytes)}</span>}
+                  </div>
+                  {shown.map(row)}
+                  {looking && (
+                    <div className="move-looking">
+                      <span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} />
+                      正在查找 1 GB 以上的文件夹…
+                    </div>
+                  )}
+                </section>
+              );
+            })}
+
+          {list !== null && !measuring && pending.length === 0 && (
+            <div className="card empty">
+              <div className="empty-icon">
+                <CircleCheck size={30} />
               </div>
-              <div style={{ minWidth: 0 }}>
-                <div className="item-title">
-                  {c.title}
-                  <span className="badge safe">已搬到 {letter(c.movedTo?.slice(0, 3))}</span>
-                </div>
-                <div className="move-route" title={`${c.path} → ${c.movedTo}`}>
-                  <span>{c.path}</span>
-                  <ArrowRight size={12} style={{ flex: "none" }} />
-                  <span className="to">{c.movedTo}</span>
-                </div>
+              <div>没有找到值得搬的大文件夹</div>
+            </div>
+          )}
+
+
+          {list !== null && pending.length > 0 && (
+            <div className="footer-bar">
+              <div className="footer-total">
+                {chosen.length ? (
+                  <>
+                    已选 {chosen.length} 项，C 盘将腾出
+                    <b className="num">{formatBytes(chosenBytes)}</b>
+                  </>
+                ) : (
+                  "勾选要搬的文件夹"
+                )}
               </div>
-              <div className="item-size num">{formatBytes(c.size)}</div>
-              <button className="btn" onClick={() => setConfirm({ restore: c })}>
-                <Undo2 size={15} /> 搬回 C 盘
+              {chosen.length > 0 && (
+                <button className="btn btn-ghost" onClick={() => setSelected(new Set())}>
+                  清空
+                </button>
+              )}
+              <div style={{ flex: 1 }} />
+              {!fits && <span className="badge review">{letter(drive)} 放不下这么多</span>}
+              <button className="btn btn-primary btn-lg" disabled={!chosen.length || !fits} onClick={() => setConfirm({ restore: null })}>
+                <Truck size={18} /> 搬到 {letter(drive)}
               </button>
             </div>
-          ))}
-        </section>
-      )}
-
-      {list !== null && pending.length > 0 && (
-        <div className="footer-bar">
-          <div className="footer-total">
-            {chosen.length ? (
-              <>
-                已选 {chosen.length} 项，C 盘将腾出
-                <b className="num">{formatBytes(chosenBytes)}</b>
-              </>
-            ) : (
-              "勾选要搬的文件夹"
-            )}
-          </div>
-          {chosen.length > 0 && (
-            <button className="btn btn-ghost" onClick={() => setSelected(new Set())}>
-              清空
-            </button>
           )}
-          <div style={{ flex: 1 }} />
-          {!fits && <span className="badge review">{letter(drive)} 放不下这么多</span>}
-          <button className="btn btn-primary btn-lg" disabled={!chosen.length || !fits} onClick={() => setConfirm({ restore: null })}>
-            <Truck size={18} /> 搬到 {letter(drive)}
-          </button>
-        </div>
+        </>
       )}
 
       {confirm && (
@@ -805,6 +826,7 @@ function VDiskPanel() {
 
 export function Move() {
   const [tab, setTab] = useState<Tab>("move");
+  const [movedCount, setMovedCount] = useState(0);
   return (
     <div className="page">
       <div className="page-head">
@@ -816,12 +838,16 @@ export function Move() {
           <button className={`tab ${tab === "move" ? "active" : ""}`} onClick={() => setTab("move")}>
             搬到其他盘
           </button>
+          <button className={`tab ${tab === "moved" ? "active" : ""}`} onClick={() => setTab("moved")}>
+            已经搬走的
+            {movedCount > 0 && <span className="tab-count num">{movedCount}</span>}
+          </button>
           <button className={`tab ${tab === "vdisk" ? "active" : ""}`} onClick={() => setTab("vdisk")}>
             压缩虚拟磁盘
           </button>
         </div>
       </div>
-      {tab === "move" ? <MovePanel /> : <VDiskPanel />}
+      {tab === "vdisk" ? <VDiskPanel /> : <MovePanel view={tab} onMovedCount={setMovedCount} />}
     </div>
   );
 }
