@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowRight, CodeXml, Globe, HardDrive, MessageCircle, Monitor, RefreshCw, ScanSearch, Sparkles, Square, TriangleAlert } from "lucide-react";
+import { ArrowRight, CodeXml, Globe, MessageCircle, Monitor, RefreshCw, ScanSearch, Sparkles, Square, TriangleAlert } from "lucide-react";
 import type { CleanItem, ScanSummary } from "../api";
 import { CATEGORIES } from "../categories";
 import { Donut } from "../components/Donut";
-import { AnimatedNumber, UsageBar } from "../components/ui";
+import { AnimatedNumber, DrivePicker, UsageBar } from "../components/ui";
 import { formatBytes, formatCount, formatDuration, percent, splitBytes } from "../format";
 import { useStore } from "../store";
 
@@ -236,27 +236,21 @@ export function Overview({ onGoClean }: { onGoClean: () => void }) {
           <h1 className="page-title">概览</h1>
           <div className="page-sub">看看磁盘空间都去哪了，哪些可以腾出来</div>
         </div>
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          {drives.length > 1 && (
-            <div className="drive-tabs">
-              {drives.map((d) => (
-                <button key={d.root} className={`drive-tab ${d.root === root ? "active" : ""}`} onClick={() => setRoot(d.root)}>
-                  <HardDrive size={15} />
-                  {d.root.replace("\\", "")} {d.label}
-                </button>
-              ))}
-            </div>
-          )}
-          {summary && !scanningHere && (
-            <span className="faint" style={{ fontSize: 12.5 }} title="扫描结果会一直保留，需要时再手动重新扫描">
-              扫描于 {scannedAgo(summary.scannedAt)}
-            </span>
-          )}
-          {summary && (
-            <button className="btn" disabled={!!scanning} title={scanningElsewhere ? `正在扫描 ${scanning?.root}，完成后再试` : undefined} onClick={() => startScan()}>
-              <RefreshCw size={15} /> 重新扫描
-            </button>
-          )}
+        {/* The status and the scan button are always there, at fixed widths, so switching drives
+            never moves the drive buttons. */}
+        <div className="overview-actions">
+          {drives.length > 1 && <DrivePicker drives={drives} value={root} onChange={setRoot} />}
+          <span className="faint scan-when" title={summary ? "扫描结果会一直保留，需要时再手动重新扫描" : undefined}>
+            {scanningHere ? "正在扫描…" : summary ? `扫描于 ${scannedAgo(summary.scannedAt)}` : "还没扫描过"}
+          </span>
+          <button
+            className="btn scan-btn"
+            disabled={!!scanning}
+            title={scanningElsewhere ? `正在扫描 ${scanning?.root}，完成后再试` : undefined}
+            onClick={() => startScan()}
+          >
+            <RefreshCw size={15} /> {summary ? "重新扫描" : "扫描"}
+          </button>
         </div>
       </div>
 

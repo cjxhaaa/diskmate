@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { CircleCheck } from "lucide-react";
+import { Check, ChevronDown, CircleCheck, HardDrive } from "lucide-react";
+import type { DriveInfo } from "../api";
+import { formatBytes } from "../format";
 import { useStore } from "../store";
 
 /** Counts up to `value` instead of jumping, so a freed-space figure reads as something happening. */
@@ -122,5 +124,97 @@ export function Switch({
     >
       <span className="switch-knob">{busy && <span className="spinner" />}</span>
     </button>
+  );
+}
+
+const driveLetter = (root: string) => root.replace("\\", "");
+
+/**
+ * Picks one drive. Up to three show as buttons, one click each; more fold into a menu that lists
+ * every drive with its label and free space, so any number of drives fits the same spot.
+ * `compact` shows only the letter on the buttons, for tight places.
+ */
+export function DrivePicker({
+  drives,
+  value,
+  onChange,
+  compact,
+}: {
+  drives: DriveInfo[];
+  value: string | null | undefined;
+  onChange: (root: string) => void;
+  compact?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", away);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [open]);
+
+  if (drives.length <= 3) {
+    return (
+      <div className="drive-tabs">
+        {drives.map((d) => (
+          <button key={d.root} className={`drive-tab ${d.root === value ? "active" : ""}`} onClick={() => onChange(d.root)}>
+            <HardDrive size={compact ? 14 : 15} />
+            {driveLetter(d.root)}
+            {!compact && d.label ? ` ${d.label}` : ""}
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  const cur = drives.find((d) => d.root === value) ?? drives[0];
+  return (
+    <div className="drive-picker" ref={ref}>
+      <button className="drive-tab active" aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        <HardDrive size={compact ? 14 : 15} />
+        {driveLetter(cur.root)}
+        {!compact && cur.label ? ` ${cur.label}` : ""}
+        <ChevronDown size={14} />
+      </button>
+      {open && (
+        <div className="drive-menu" role="listbox">
+          {drives.map((d) => (
+            <button
+              key={d.root}
+              role="option"
+              aria-selected={d.root === cur.root}
+              className={`drive-menu-item ${d.root === cur.root ? "active" : ""}`}
+              onClick={() => {
+                onChange(d.root);
+                setOpen(false);
+              }}
+            >
+              <HardDrive size={16} className="drive-menu-icon" />
+              <div className="drive-menu-main">
+                <div className="drive-menu-name">
+                  <b>{driveLetter(d.root)}</b>
+                  <span>{d.label || "本地磁盘"}</span>
+                  {d.isSystem && d.label !== "系统" && <span className="badge">系统</span>}
+                </div>
+                <UsageBar used={d.total - d.free} total={d.total} />
+              </div>
+              <div className="drive-menu-free num">
+                {formatBytes(d.free)} 可用
+                <span className="faint"> / {formatBytes(d.total)}</span>
+              </div>
+              <span className="drive-menu-check">{d.root === cur.root && <Check size={15} />}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

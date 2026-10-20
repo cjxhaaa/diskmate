@@ -17,7 +17,7 @@ import {
   Undo2,
 } from "lucide-react";
 import { api, type DriveInfo, type MoveCandidate, type MoveProgress, type VDisk } from "../api";
-import { Dialog } from "../components/ui";
+import { Dialog, DrivePicker } from "../components/ui";
 import { formatBytes } from "../format";
 import { useStore } from "../store";
 
@@ -369,16 +369,7 @@ function MovePanel({ view, onMovedCount }: { view: "move" | "moved"; onMovedCoun
                 <span className="num">{chosenBytes ? formatBytes(chosenBytes) : "勾选下方"}</span>
               </div>
               <DriveTile title="搬到" drive={targetDrive} change={chosenBytes} tone="in">
-                {targets.length > 1 ? (
-                  <div className="drive-tabs">
-                    {targets.map((d) => (
-                      <button key={d.root} className={`drive-tab ${drive === d.root ? "active" : ""}`} onClick={() => setDrive(d.root)}>
-                        <HardDrive size={14} />
-                        {letter(d.root)}
-                      </button>
-                    ))}
-                  </div>
-                ) : undefined}
+                {targets.length > 1 ? <DrivePicker compact drives={targets} value={drive} onChange={setDrive} /> : undefined}
               </DriveTile>
             </div>
             <div className="move-steps">
