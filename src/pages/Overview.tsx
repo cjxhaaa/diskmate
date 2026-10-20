@@ -246,7 +246,13 @@ export function Overview({ onGoClean }: { onGoClean: () => void }) {
           <button
             className="btn scan-btn"
             disabled={!!scanning}
-            title={scanningElsewhere ? `正在扫描 ${scanning?.root}，完成后再试` : undefined}
+            title={
+              scanningElsewhere
+                ? `正在扫描 ${scanning?.root}，完成后再试`
+                : summary
+                  ? `扫描于 ${scannedAgo(summary.scannedAt)}`
+                  : undefined
+            }
             onClick={() => startScan()}
           >
             <RefreshCw size={15} /> {summary ? "重新扫描" : "扫描"}

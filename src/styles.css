@@ -473,10 +473,6 @@ button {
 
 /* ---------------------------------------------------------------- overview */
 
-.drive-tabs {
-  display: flex;
-  gap: 8px;
-}
 .drive-tab {
   display: flex;
   align-items: center;
@@ -513,6 +509,12 @@ button {
 .scan-btn {
   min-width: 120px;
   justify-content: center;
+}
+/* In a narrow window the scan time goes into the button's tooltip, so the header stays one line. */
+@media (max-width: 1100px) {
+  .scan-when {
+    display: none;
+  }
 }
 .drive-menu {
   position: absolute;

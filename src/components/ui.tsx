@@ -130,9 +130,9 @@ export function Switch({
 const driveLetter = (root: string) => root.replace("\\", "");
 
 /**
- * Picks one drive. Up to three show as buttons, one click each; more fold into a menu that lists
- * every drive with its label and free space, so any number of drives fits the same spot.
- * `compact` shows only the letter on the buttons, for tight places.
+ * Picks one drive from a menu that lists every drive with its label and free space. The button
+ * stays one size however many drives there are, so it never crowds the header around it.
+ * `compact` shows only the letter on the button, for tight places.
  */
 export function DrivePicker({
   drives,
@@ -160,20 +160,6 @@ export function DrivePicker({
       document.removeEventListener("keydown", esc);
     };
   }, [open]);
-
-  if (drives.length <= 3) {
-    return (
-      <div className="drive-tabs">
-        {drives.map((d) => (
-          <button key={d.root} className={`drive-tab ${d.root === value ? "active" : ""}`} onClick={() => onChange(d.root)}>
-            <HardDrive size={compact ? 14 : 15} />
-            {driveLetter(d.root)}
-            {!compact && d.label ? ` ${d.label}` : ""}
-          </button>
-        ))}
-      </div>
-    );
-  }
 
   const cur = drives.find((d) => d.root === value) ?? drives[0];
   return (
