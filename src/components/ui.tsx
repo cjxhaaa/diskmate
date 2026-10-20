@@ -164,11 +164,19 @@ export function DrivePicker({
   const cur = drives.find((d) => d.root === value) ?? drives[0];
   return (
     <div className="drive-picker" ref={ref}>
-      <button className="drive-tab active" aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-        <HardDrive size={compact ? 14 : 15} />
-        {driveLetter(cur.root)}
-        {!compact && cur.label ? ` ${cur.label}` : ""}
-        <ChevronDown size={14} />
+      <button
+        className={`drive-tab active drive-picker-btn ${compact ? "compact" : ""}`}
+        title={`${driveLetter(cur.root)} ${cur.label || "本地磁盘"}`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <HardDrive size={compact ? 14 : 15} style={{ flex: "none" }} />
+        <span className="drive-picker-label">
+          {driveLetter(cur.root)}
+          {!compact && cur.label ? ` ${cur.label}` : ""}
+        </span>
+        <ChevronDown size={14} style={{ flex: "none" }} />
       </button>
       {open && (
         <div className="drive-menu" role="listbox">

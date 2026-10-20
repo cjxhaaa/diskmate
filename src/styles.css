@@ -494,6 +494,20 @@ button {
 .drive-picker {
   position: relative;
 }
+/* One width whatever the drive, so switching never moves anything; long labels are cut short. */
+.drive-picker-btn {
+  width: 170px;
+}
+.drive-picker-btn.compact {
+  width: 84px;
+}
+.drive-picker-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+}
 .overview-actions {
   display: flex;
   gap: 10px;
