@@ -74,6 +74,10 @@ npm run tauri build   # installer in src-tauri/target/release/bundle/nsis/
 
 `npm run dev` serves the UI alone at http://127.0.0.1:1430 with sample data, no Rust needed. Implementation notes (in Chinese): [docs/TECHNICAL.md](docs/TECHNICAL.md).
 
+## Thanks
+
+Thanks to the [LINUX DO](https://linux.do/) community for support and feedback.
+
 ## License
 
 [MIT](LICENSE)

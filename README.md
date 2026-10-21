@@ -176,6 +176,8 @@ npm run tauri build    # 生成安装包：src-tauri/target/release/bundle/nsis/
 
 思路参考了 [WizTree](https://diskanalyzer.com/) / [TreeSize](https://www.jam-software.com/treesize_free)（空间分析）、CCleaner 与各类电脑管家（分类清理）、[npkill](https://github.com/voidcosmos/npkill) / [kondo](https://github.com/tbillington/kondo)（开发者构建产物）。基于 [Tauri](https://tauri.app/)、[React](https://react.dev/) 和 [Lucide](https://lucide.dev/) 图标构建。
 
+感谢 [LINUX DO](https://linux.do/) 社区的支持与反馈。
+
 ## 许可证
 
 [MIT](LICENSE)
