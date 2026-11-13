@@ -50,28 +50,30 @@ const FILE_ATTRIBUTE_COMPRESSED: u32 = 0x800;
 /// Only those two cases cost an extra system call, so the common file stays as cheap as the
 /// directory listing it came from.
 pub fn on_disk_len_at(path: &Path, md: &Metadata) -> u64 {
-    let attrs = md.file_attributes();
-    let cloud = FILE_ATTRIBUTE_OFFLINE
-        | FILE_ATTRIBUTE_RECALL_ON_OPEN
-        | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS;
-    if attrs & cloud != 0 {
+    disk_len(md.file_attributes(), md.len(), || path.to_path_buf())
+}
+
+/// [`on_disk_len_at`] from the attributes and length a directory listing gave; `path` is only
+/// built for the sparse / compressed files that need it.
+fn disk_len(attrs: u32, len: u64, path: impl FnOnce() -> PathBuf) -> u64 {
+    if attrs & CLOUD_ONLY != 0 {
         return 0;
     }
     if attrs & (FILE_ATTRIBUTE_SPARSE_FILE | FILE_ATTRIBUTE_COMPRESSED) != 0 {
-        if let Some(n) = compressed_size(path) {
+        if let Some(n) = compressed_size(&path()) {
             return n;
         }
     }
-    md.len()
+    len
 }
+
+/// A cloud file whose contents are not on this disk.
+const CLOUD_ONLY: u32 =
+    FILE_ATTRIBUTE_OFFLINE | FILE_ATTRIBUTE_RECALL_ON_OPEN | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS;
 
 /// [`on_disk_len_at`] when the path is not at hand; only the cloud-placeholder case is handled.
 pub fn on_disk_len(md: &Metadata) -> u64 {
-    let attrs = md.file_attributes();
-    let cloud = FILE_ATTRIBUTE_OFFLINE
-        | FILE_ATTRIBUTE_RECALL_ON_OPEN
-        | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS;
-    if attrs & cloud != 0 {
+    if md.file_attributes() & CLOUD_ONLY != 0 {
         0
     } else {
         md.len()
@@ -119,6 +121,141 @@ pub fn hard_link_identity(path: &Path) -> Option<(u32, u64)> {
             ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64,
         )
     })
+}
+
+/// One entry of [`list_dir`].
+pub struct ListEntry {
+    pub name: std::ffi::OsString,
+    pub attrs: u32,
+    /// Logical length; 0 for folders.
+    pub len: u64,
+    /// Last write, as Unix seconds.
+    pub modified: u64,
+    /// NTFS file reference number: every hard link to one file has the same id. 0 where the file
+    /// system has none to give.
+    pub file_id: u64,
+}
+
+impl ListEntry {
+    pub fn is_dir(&self) -> bool {
+        self.attrs & 0x10 != 0
+    }
+    /// Symlinks, junctions and other reparse points, which the scanner never follows.
+    pub fn is_link(&self) -> bool {
+        self.attrs & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+}
+
+/// Lists a folder with `GetFileInformationByHandleEx(FileIdBothDirectoryInfo)`: one 64 KB batch
+/// per call instead of FindNextFile's small ones, and each entry carries its file id, so hard links
+/// can be told apart from the listing alone — no file has to be opened.
+pub fn list_dir(path: &Path) -> std::io::Result<Vec<ListEntry>> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Storage::FileSystem::{FILE_FLAG_BACKUP_SEMANTICS, FILE_LIST_DIRECTORY};
+    let dir = std::fs::OpenOptions::new()
+        .access_mode(FILE_LIST_DIRECTORY.0)
+        .share_mode(0x7)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS.0)
+        .open(long_path(path))?;
+    let handle = HANDLE(dir.as_raw_handle());
+    thread_local! {
+        // One per worker thread, reused: a system drive has the better part of a million folders,
+        // and a fresh 64 KB buffer for each is a lot of memory to clear for nothing.
+        // u64s keep it 8-byte aligned, as the entries' i64 fields need.
+        static BUF: std::cell::RefCell<Vec<u64>> = std::cell::RefCell::new(vec![0u64; 64 * 1024 / 8]);
+    }
+    BUF.with_borrow_mut(|buf| read_listing(handle, buf))
+}
+
+fn read_listing(
+    handle: windows::Win32::Foundation::HANDLE,
+    buf: &mut [u64],
+) -> std::io::Result<Vec<ListEntry>> {
+    use windows::Win32::Foundation::ERROR_NO_MORE_FILES;
+    use windows::Win32::Storage::FileSystem::{
+        FileIdBothDirectoryInfo, GetFileInformationByHandleEx, FILE_ID_BOTH_DIR_INFO,
+    };
+    let mut out = Vec::new();
+    loop {
+        let got = unsafe {
+            GetFileInformationByHandleEx(
+                handle,
+                FileIdBothDirectoryInfo,
+                buf.as_mut_ptr().cast(),
+                (buf.len() * 8) as u32,
+            )
+        };
+        if let Err(e) = got {
+            if e.code() == ERROR_NO_MORE_FILES.to_hresult() {
+                break;
+            }
+            // Failing partway is failing: half a listing would show the folder smaller than it
+            // is, where a failed one is marked as unknown.
+            return Err(std::io::Error::from_raw_os_error(e.code().0 & 0xFFFF));
+        }
+        let base = buf.as_ptr() as *const u8;
+        let mut offset = 0usize;
+        loop {
+            // SAFETY: the system wrote a chain of entries into `buf`, each starting at an offset
+            // it gave us, aligned and inside the buffer.
+            let info = unsafe { &*(base.add(offset) as *const FILE_ID_BOTH_DIR_INFO) };
+            let name = unsafe {
+                std::slice::from_raw_parts(
+                    std::ptr::addr_of!(info.FileName) as *const u16,
+                    info.FileNameLength as usize / 2,
+                )
+            };
+            if name != [b'.' as u16] && name != [b'.' as u16, b'.' as u16] {
+                use std::os::windows::ffi::OsStringExt;
+                out.push(ListEntry {
+                    name: std::ffi::OsString::from_wide(name),
+                    attrs: info.FileAttributes,
+                    len: info.EndOfFile.max(0) as u64,
+                    modified: filetime_to_unix(info.LastWriteTime),
+                    file_id: info.FileId as u64,
+                });
+            }
+            if info.NextEntryOffset == 0 {
+                break;
+            }
+            offset += info.NextEntryOffset as usize;
+        }
+    }
+    Ok(out)
+}
+
+fn filetime_to_unix(t: i64) -> u64 {
+    // FILETIME counts 100 ns steps from 1601; Unix time starts 11644473600 s later.
+    (t / 10_000_000).saturating_sub(11_644_473_600).max(0) as u64
+}
+
+/// Bytes `entry` takes on disk; see [`on_disk_len_at`], which this mirrors for listing entries.
+pub fn entry_on_disk_len(dir: &Path, entry: &ListEntry) -> u64 {
+    disk_len(entry.attrs, entry.len, || dir.join(&entry.name))
+}
+
+/// Whether the volume `root` is on is NTFS, where [`ListEntry::file_id`] is the same for every
+/// hard link to a file. Other file systems give no id (FAT) or a wider one (ReFS).
+pub fn is_ntfs(root: &Path) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::GetVolumeInformationW;
+    let s = display(root);
+    let Some(drive) = s.get(..3) else {
+        return false;
+    };
+    let wide: Vec<u16> = std::ffi::OsStr::new(drive)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut fs = [0u16; 32];
+    let ok = unsafe {
+        GetVolumeInformationW(PCWSTR(wide.as_ptr()), None, None, None, None, Some(&mut fs))
+    };
+    let len = fs.iter().position(|&c| c == 0).unwrap_or(0);
+    ok.is_ok() && String::from_utf16_lossy(&fs[..len]).eq_ignore_ascii_case("NTFS")
 }
 
 fn env_path(var: &str) -> Option<PathBuf> {
@@ -229,6 +366,14 @@ pub fn days_ago(days: u64) -> SystemTime {
     SystemTime::now() - std::time::Duration::from_secs(days * 86_400)
 }
 
+/// Now, in nanoseconds since 1970: unique enough for a temporary file name.
+pub fn unix_nanos() -> u128 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0)
+}
+
 pub fn unix_secs(t: SystemTime) -> u64 {
     t.duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -326,6 +471,17 @@ pub fn passive_pool() -> &'static rayon::ThreadPool {
     })
 }
 
+/// Below-normal CPU priority, but normal disk priority. The main pool runs what the user is
+/// waiting on (a scan, a size): background mode would also drop its disk I/O to "very low", and
+/// on a hard disk with anything else reading (Defender, Windows Update) that starves a scan for
+/// hours.
+fn below_normal_thread() {
+    use windows::Win32::System::Threading::{
+        GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL,
+    };
+    let _ = unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL) };
+}
+
 pub fn init_worker_pool() {
     let logical = std::thread::available_parallelism()
         .map(|n| n.get())
@@ -333,6 +489,6 @@ pub fn init_worker_pool() {
     let _ = rayon::ThreadPoolBuilder::new()
         .num_threads((logical / 4).clamp(2, 6))
         .thread_name(|i| format!("diskmate-worker-{i}"))
-        .start_handler(|_| background_thread())
+        .start_handler(|_| below_normal_thread())
         .build_global();
 }

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { Archive, Disc, Download, File, FileBox, Film, FolderOpen, Lock, Trash } from "lucide-react";
-import { api, type LargeFile } from "../api";
+import { Archive, Disc, Download, File, FileBox, Film, FolderOpen, Lock, Trash, Truck } from "lucide-react";
+import { api, type LargeFile, type MoveOutcome } from "../api";
 import { DeleteDialog } from "../components/DeleteDialog";
-import { formatBytes, formatDate } from "../format";
+import { MoveDialog } from "../components/MoveDialog";
+import { failNote, formatBytes, formatDate } from "../format";
 import { useStore } from "../store";
 
 type Kind = "all" | "video" | "archive" | "image" | "installer" | "other";
@@ -46,11 +47,12 @@ function protectedReason(f: LargeFile): string | null {
 
 /** The large-files tab of the Files page: everything over 100 MB the last scan saw. */
 export function LargeFilesPanel() {
-  const { current, toast, refreshDrives, startScan, scanning } = useStore();
+  const { current, toast, refreshDrives, startScan, scanning, drives } = useStore();
   const [files, setFiles] = useState<LargeFile[] | null>(null);
   const [kind, setKind] = useState<Kind>("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [confirm, setConfirm] = useState(false);
+  const [moving, setMoving] = useState(false);
   // A result read back from history has no file list behind it.
   const scanDone = !!current && !current.fromHistory;
 
@@ -66,12 +68,28 @@ export function LargeFilesPanel() {
 
   const remove = async (permanent: boolean) => {
     setConfirm(false);
-    const out = await api.deleteFiles(
-      chosen.map((f) => f.path),
-      permanent,
-    );
-    toast(`${permanent ? "已删除" : "已移到回收站"}：${formatBytes(out.freed)}${out.skippedFiles ? `，${out.skippedFiles} 个失败` : ""}`);
+    let out;
+    try {
+      out = await api.deleteFiles(
+        chosen.map((f) => f.path),
+        permanent,
+      );
+    } catch (e) {
+      toast(`删除失败：${String(e)}`);
+      return;
+    }
+    toast(`${permanent ? "已删除" : "已移到回收站"}：${formatBytes(out.freed)}${failNote(out)}`);
     setFiles((list) => list?.filter((f) => !selected.has(f.path)) ?? null);
+    setSelected(new Set());
+    void refreshDrives();
+  };
+
+  const moved = (out: MoveOutcome, drive: string) => {
+    setMoving(false);
+    toast(`已移到 ${drive.replace("\\", "")}：${formatBytes(out.freed)}${failNote(out)}`);
+    // The list is the last scan's: drop exactly what left this drive.
+    const gone = new Set(out.moved.map((p) => p.toLowerCase()));
+    setFiles((list) => list?.filter((f) => !gone.has(f.path.toLowerCase())) ?? null);
     setSelected(new Set());
     void refreshDrives();
   };
@@ -199,6 +217,11 @@ export function LargeFilesPanel() {
           <button className="btn btn-ghost" onClick={() => setSelected(new Set())}>
             取消选择
           </button>
+          {drives.length > 1 && (
+            <button className="btn btn-lg" onClick={() => setMoving(true)} title="不想删，就移到其他盘">
+              <Truck size={17} /> 移到其他盘
+            </button>
+          )}
           <button className="btn btn-primary btn-lg" onClick={() => setConfirm(true)}>
             <Trash size={17} /> 删除
           </button>
@@ -206,6 +229,7 @@ export function LargeFilesPanel() {
       )}
 
       {confirm && <DeleteDialog items={chosen} onCancel={() => setConfirm(false)} onConfirm={remove} />}
+      {moving && <MoveDialog items={chosen} onCancel={() => setMoving(false)} onDone={moved} />}
     </>
   );
 }

@@ -86,6 +86,11 @@ export interface Outcome {
   error: string | null;
 }
 
+/** A move's outcome, plus the paths that actually left. */
+export interface MoveOutcome extends Outcome {
+  moved: string[];
+}
+
 export interface CleanResult {
   id: string;
   title: string;
@@ -338,6 +343,8 @@ export const api = {
   analyzeCleanup: () => call<CleanItem[]>("analyze_cleanup"),
   runCleanup: (ids: string[]) => call<CleanResult[]>("run_cleanup", { ids }),
   deleteFiles: (paths: string[], permanent: boolean) => call<Outcome>("delete_files", { paths, permanent }),
+  /** Moves hand-picked files to the same path on `driveRoot` ("D:\\"). */
+  moveFiles: (paths: string[], driveRoot: string) => call<MoveOutcome>("move_files", { paths, driveRoot }),
   scanHistory: (root: string) => call<ScanSummary[]>("scan_history", { root }),
   scanDiff: (root: string, baseAt: number, currentAt: number) => call<ScanDiff>("scan_diff", { root, baseAt, currentAt }),
   analyzeDownloads: () => call<DownloadItem[]>("analyze_downloads"),

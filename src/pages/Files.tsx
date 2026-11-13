@@ -17,11 +17,13 @@ import {
   Search,
   Square,
   Trash,
+  Truck,
   Wand,
 } from "lucide-react";
-import { api, type DownloadGroup, type DownloadKind, type DupeGroup } from "../api";
+import { api, type DownloadGroup, type DownloadKind, type DupeGroup, type MoveOutcome } from "../api";
 import { DeleteDialog } from "../components/DeleteDialog";
-import { formatBytes, formatCount, formatDate } from "../format";
+import { MoveDialog } from "../components/MoveDialog";
+import { failNote, formatBytes, formatCount, formatDate } from "../format";
 import { useStore } from "../store";
 import { LargeFilesPanel } from "./LargeFiles";
 
@@ -63,10 +65,11 @@ function FileIcon({ kind }: { kind: DownloadKind }) {
 }
 
 function DownloadsPanel() {
-  const { downloads, downloadsLoading, loadDownloads, dropDownloads, toast, refreshDrives } = useStore();
+  const { downloads, downloadsLoading, loadDownloads, dropDownloads, toast, refreshDrives, drives } = useStore();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [openOther, setOpenOther] = useState(false);
   const [confirm, setConfirm] = useState(false);
+  const [moving, setMoving] = useState(false);
 
   useEffect(() => {
     if (downloads === null && !downloadsLoading) loadDownloads();
@@ -93,9 +96,24 @@ function DownloadsPanel() {
   const remove = async (permanent: boolean) => {
     setConfirm(false);
     const paths = chosen.map((c) => c.path);
-    const out = await api.deleteFiles(paths, permanent);
-    toast(`${permanent ? "已删除" : "已移到回收站"}：${formatBytes(out.freed)}${out.skippedFiles ? `，${out.skippedFiles} 项失败` : ""}`);
+    let out;
+    try {
+      out = await api.deleteFiles(paths, permanent);
+    } catch (e) {
+      toast(`删除失败：${String(e)}`);
+      return;
+    }
+    toast(`${permanent ? "已删除" : "已移到回收站"}：${formatBytes(out.freed)}${failNote(out)}`);
     dropDownloads(paths);
+    setSelected(new Set());
+    void refreshDrives();
+  };
+
+  const moved = (out: MoveOutcome, drive: string) => {
+    setMoving(false);
+    toast(`已移到 ${drive.replace("\\", "")}：${formatBytes(out.freed)}${failNote(out)}`);
+    // Re-read the folder rather than guess which items went: a failed one is still there.
+    void loadDownloads();
     setSelected(new Set());
     void refreshDrives();
   };
@@ -218,6 +236,11 @@ function DownloadsPanel() {
           <button className="btn btn-ghost" onClick={() => setSelected(new Set())}>
             取消选择
           </button>
+          {drives.length > 1 && (
+            <button className="btn btn-lg" onClick={() => setMoving(true)} title="不想删，就移到其他盘">
+              <Truck size={17} /> 移到其他盘
+            </button>
+          )}
           <button className="btn btn-primary btn-lg" onClick={() => setConfirm(true)}>
             <Trash size={17} /> 删除
           </button>
@@ -225,6 +248,7 @@ function DownloadsPanel() {
       )}
 
       {confirm && <DeleteDialog items={chosen} onCancel={() => setConfirm(false)} onConfirm={remove} />}
+      {moving && <MoveDialog items={chosen} onCancel={() => setMoving(false)} onDone={moved} />}
     </>
   );
 }
@@ -306,7 +330,7 @@ function DupesPanel() {
     const paths = chosen.map((c) => c.path);
     try {
       const out = await api.deleteDuplicates(paths, permanent);
-      toast(`${permanent ? "已删除" : "已移到回收站"} ${out.removedFiles} 个重复文件，${formatBytes(out.freed)}`);
+      toast(`${permanent ? "已删除" : "已移到回收站"} ${out.removedFiles} 个重复文件，${formatBytes(out.freed)}${failNote(out)}`);
       dropDupeFiles(paths);
       setSelected(new Set());
       void refreshDrives();

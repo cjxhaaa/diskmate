@@ -386,6 +386,18 @@ async fn delete_files(paths: Vec<String>, permanent: bool) -> Result<clean::Outc
         .map_err(|e| e.to_string())
 }
 
+/// Files or folders picked by hand, moved to the same path on another drive.
+#[tauri::command]
+async fn move_files(
+    paths: Vec<String>,
+    drive_root: String,
+) -> Result<migrate::MoveOutcome, String> {
+    let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+    tauri::async_runtime::spawn_blocking(move || migrate::move_user_paths(&paths, &drive_root))
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Every saved scan of `root`, oldest first.
 #[tauri::command]
 fn scan_history(app: AppHandle, root: String) -> Vec<scan::Summary> {
@@ -953,6 +965,40 @@ fn webview_memory_low(window: &tauri::WebviewWindow, low: bool) {
     });
 }
 
+/// Runs a helper job when the command line asks for one, returning its exit code; `None` means
+/// start the app as usual.
+pub fn run_helper() -> Option<i32> {
+    let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    if args.len() == 3 && args[1] == clean::RECYCLE_ARG {
+        return Some(clean::recycle_helper(std::path::Path::new(&args[2])));
+    }
+    None
+}
+
+/// Appends every panic to `crash.log` in the data folder, so a report of DiskMate closing on its
+/// own can come with where it happened.
+fn log_panics(dir: PathBuf) {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        use std::io::Write;
+        let _ = std::fs::create_dir_all(&dir);
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join("crash.log"))
+        {
+            let _ = writeln!(
+                f,
+                "[{}] v{} thread '{}': {info}",
+                util::unix_secs(std::time::SystemTime::now()),
+                env!("CARGO_PKG_VERSION"),
+                std::thread::current().name().unwrap_or("?"),
+            );
+        }
+        default(info);
+    }));
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     util::init_worker_pool();
@@ -964,6 +1010,7 @@ pub fn run() {
         }))
         .setup(|app| {
             let dir = data_dir(app.handle());
+            log_panics(dir.clone());
             cache::init(dir.clone());
             tray::setup(app.handle(), &dir, |app| {
                 let app = app.clone();
@@ -1013,6 +1060,7 @@ pub fn run() {
             analyze_cleanup,
             run_cleanup,
             delete_files,
+            move_files,
             scan_history,
             scan_diff,
             analyze_downloads,

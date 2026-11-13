@@ -555,6 +555,169 @@ pub fn migrate(
     Ok(rec)
 }
 
+/// Moves files or folders the user picked by hand (Downloads, large files) to the same path on
+/// `drive_root`: `C:\Users\me\Downloads\a.zip` → `D:\Users\me\Downloads\a.zip`. A plain move —
+/// unlike [`migrate`], no link is left behind, since a downloaded file has no program that expects
+/// it at the old place. Each item is copied and checked before the original is deleted.
+pub fn move_user_paths(paths: &[PathBuf], drive_root: &str) -> MoveOutcome {
+    let mut moved = Vec::new();
+    let outcome = move_each(paths, drive_root, &mut moved);
+    MoveOutcome { outcome, moved }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MoveOutcome {
+    #[serde(flatten)]
+    pub outcome: crate::clean::Outcome,
+    /// The paths that left, so the UI can drop exactly those.
+    pub moved: Vec<String>,
+}
+
+/// Whether anything under `dir` is a junction or symlink. robocopy skips them (`/XJ`) and deleting
+/// the original would then lose them, so such a folder is not moved.
+fn has_link(dir: &Path) -> bool {
+    let Ok(rd) = std::fs::read_dir(long_path(dir)) else {
+        return false;
+    };
+    rd.flatten().any(|e| match e.metadata() {
+        Ok(md) if is_link(&md) => true,
+        Ok(md) if md.is_dir() => has_link(&e.path()),
+        _ => false,
+    })
+}
+
+fn move_each(
+    paths: &[PathBuf],
+    drive_root: &str,
+    moved: &mut Vec<String>,
+) -> crate::clean::Outcome {
+    use crate::clean::{remove_tree_pub, user_path_ok, Outcome};
+    let mut out = Outcome::default();
+    let drive_ok = crate::sys::list_drives()
+        .iter()
+        .any(|d| d.root.eq_ignore_ascii_case(drive_root));
+    if !drive_ok {
+        out.skipped_files = paths.len() as u64;
+        out.error = Some(format!("找不到磁盘 {drive_root}"));
+        return out;
+    }
+    let fail = |out: &mut Outcome, e: String| {
+        out.skipped_files += 1;
+        out.error.get_or_insert(e);
+    };
+    for p in paths {
+        if !user_path_ok(p) {
+            fail(&mut out, format!("{} 不能搬", display(p)));
+            continue;
+        }
+        if display(p)
+            .get(..3)
+            .is_some_and(|d| d.eq_ignore_ascii_case(drive_root))
+        {
+            fail(&mut out, format!("{} 已经在 {drive_root} 上了", display(p)));
+            continue;
+        }
+        let target = target_for(p, drive_root);
+        if target.exists() {
+            fail(
+                &mut out,
+                format!("{} 已经存在，请先处理掉", display(&target)),
+            );
+            continue;
+        }
+        let is_dir = p.is_dir();
+        if is_dir && has_link(p) {
+            fail(
+                &mut out,
+                format!("{} 里有快捷链接（junction），请手动移动", display(p)),
+            );
+            continue;
+        }
+        let size = if is_dir {
+            measure(p, None)
+        } else {
+            Size {
+                bytes: util::file_len(p).unwrap_or(0),
+                files: 1,
+            }
+        };
+        let free = crate::sys::drive_space(drive_root)
+            .map(|(_, f)| f)
+            .unwrap_or(0);
+        if free < size.bytes + 512 * 1024 * 1024 {
+            fail(
+                &mut out,
+                format!(
+                    "{drive_root} 空间不够：需要 {}，只剩 {}",
+                    gb(size.bytes),
+                    gb(free)
+                ),
+            );
+            continue;
+        }
+        if let Some(parent) = target.parent() {
+            if let Err(e) = std::fs::create_dir_all(long_path(parent)) {
+                fail(&mut out, format!("无法在 {drive_root} 上建立文件夹：{e}"));
+                continue;
+            }
+        }
+        // Copy and check. Until the check passes, the original is untouched and the copy is
+        // removed on failure.
+        let copied = if is_dir {
+            std::fs::create_dir_all(long_path(&target))
+                .map_err(|e| e.to_string())
+                .and_then(|_| copy_tree(p, &target, size.bytes, &|_| {}))
+                .and_then(|_| same_contents(p, &target))
+        } else {
+            std::fs::copy(long_path(p), long_path(&target))
+                .map_err(|e| format!("复制 {} 失败：{e}", display(p)))
+                .and_then(|n| {
+                    if n == util::file_len(p).unwrap_or(u64::MAX) {
+                        Ok(())
+                    } else {
+                        Err(format!("复制 {} 后大小对不上", display(p)))
+                    }
+                })
+        };
+        if let Err(e) = copied {
+            if is_dir {
+                let _ = remove_tree_pub(&target);
+            } else {
+                let _ = std::fs::remove_file(long_path(&target));
+            }
+            fail(&mut out, e);
+            continue;
+        }
+        // Now the original goes.
+        let removed = if is_dir {
+            remove_tree_pub(p);
+            !p.exists()
+        } else {
+            std::fs::remove_file(long_path(p)).is_ok()
+        };
+        if removed {
+            out.freed += size.bytes;
+            out.removed_files += size.files;
+            moved.push(display(p));
+        } else if is_dir {
+            // Part of the folder was in use: the copy is complete, and only what could be deleted
+            // left C:. Keep the copy — deleting it would lose the files that did go.
+            fail(
+                &mut out,
+                format!(
+                    "已复制到 {}，但原文件夹里有文件正被占用，没能全部删掉",
+                    display(&target)
+                ),
+            );
+        } else {
+            let _ = std::fs::remove_file(long_path(&target));
+            fail(&mut out, format!("{} 正被其他程序占用", display(p)));
+        }
+    }
+    out
+}
+
 /// Brings a moved folder back to where it was.
 pub fn restore(
     dir: &Path,
@@ -682,6 +845,20 @@ mod tests {
     }
 
     #[test]
+    fn links_inside_a_folder_are_found() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("plain/deep")).unwrap();
+        std::fs::create_dir_all(root.path().join("linked/deep")).unwrap();
+        make_junction(
+            &root.path().join("linked").join("deep").join("j"),
+            &root.path().join("plain"),
+        )
+        .unwrap();
+        assert!(!has_link(&root.path().join("plain")));
+        assert!(has_link(&root.path().join("linked")));
+    }
+
+    #[test]
     fn running_programs_map_to_names_people_know() {
         let running = vec!["weixin.exe".to_string(), "explorer.exe".to_string()];
         assert_eq!(blockers_for(WECHAT, &running), vec!["微信".to_string()]);
@@ -778,5 +955,41 @@ mod real_move {
         let _ = std::fs::remove_dir(target_for(&home(), r"D:\"));
         let _ = std::fs::remove_dir(PathBuf::from(r"D:\Users"));
         println!("round trip ok");
+    }
+
+    /// Writes to the user folder and D:, then cleans up:
+    /// `cargo test move_to_d -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn move_to_d() {
+        use super::*;
+        let src = home().join(format!("diskmate-move-test-{}", util::unix_nanos()));
+        std::fs::create_dir_all(src.join("folder/deep")).unwrap();
+        std::fs::write(src.join("folder/deep/f.bin"), vec![7u8; 3000]).unwrap();
+        std::fs::write(src.join("one.zip"), vec![1u8; 1234]).unwrap();
+        std::fs::create_dir_all(src.join("linked")).unwrap();
+        make_junction(&src.join("linked").join("j"), &src.join("folder")).unwrap();
+        let out = move_user_paths(
+            &[src.join("folder"), src.join("one.zip"), src.join("linked")],
+            r"D:\",
+        );
+        let dst = target_for(&src, r"D:\");
+        println!("{:?} moved {:?}", out.outcome, out.moved);
+        assert_eq!(out.moved.len(), 2, "the folder with a junction stays");
+        assert_eq!(out.outcome.freed, 4234);
+        assert_eq!(out.outcome.skipped_files, 1);
+        assert!(!src.join("folder").exists() && !src.join("one.zip").exists());
+        assert_eq!(
+            std::fs::read(dst.join("folder/deep/f.bin")).unwrap().len(),
+            3000
+        );
+        assert_eq!(std::fs::read(dst.join("one.zip")).unwrap().len(), 1234);
+        assert!(
+            src.join("linked/j").exists()
+                || is_link(&std::fs::symlink_metadata(src.join("linked/j")).unwrap())
+        );
+        std::fs::remove_dir(src.join("linked/j")).unwrap();
+        std::fs::remove_dir_all(&src).unwrap();
+        std::fs::remove_dir_all(&dst).unwrap();
     }
 }

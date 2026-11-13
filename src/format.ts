@@ -35,8 +35,18 @@ export function formatDate(unixSecs: number): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-export function formatDuration(ms: number): string {
+/** 65_000 → "1 分 5 秒"; `rough` drops the seconds past a minute, for estimates. */
+export function formatDuration(ms: number, rough = false): string {
   const s = Math.round(ms / 1000);
   if (s < 60) return `${s} 秒`;
-  return `${Math.floor(s / 60)} 分 ${s % 60} 秒`;
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h > 0) return `${h} 小时 ${m} 分`;
+  return rough ? `${m} 分钟` : `${m} 分 ${s % 60} 秒`;
+}
+
+/** "，2 项失败：<why>" after a delete or move that did not all go through; "" when all did. */
+export function failNote(out: { skippedFiles: number; error: string | null }): string {
+  if (!out.skippedFiles) return "";
+  return `，${out.skippedFiles} 项失败${out.error ? `：${out.error}` : ""}`;
 }

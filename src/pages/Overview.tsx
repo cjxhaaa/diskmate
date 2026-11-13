@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowRight, CodeXml, Globe, MessageCircle, Monitor, RefreshCw, ScanSearch, Sparkles, Square, TriangleAlert } from "lucide-react";
-import type { CleanItem, ScanSummary } from "../api";
+import type { CleanItem, ScanProgress, ScanSummary } from "../api";
 import { CATEGORIES } from "../categories";
 import { Donut } from "../components/Donut";
 import { AnimatedNumber, DrivePicker, UsageBar } from "../components/ui";
@@ -173,10 +173,29 @@ function HeroAction({ onGoClean }: { onGoClean: () => void }) {
   );
 }
 
+/**
+ * How far a scan has got, 0–1, or null while there is too little to go on. The last scan of the
+ * drive gives the best yardstick (files come at a steadier pace than bytes); without one, bytes
+ * against the space in use. Never 100% before it is done: some of the used space (restore
+ * points, folders Windows keeps closed) is never seen.
+ */
+function scanFraction(p: ScanProgress | null, prevFiles: number | undefined, used: number): number | null {
+  if (!p) return null;
+  const f = prevFiles ? p.files / prevFiles : used > 0 ? p.bytes / used : 0;
+  return f > 0 ? Math.min(f, 0.99) : null;
+}
+
 function Scanning() {
-  const { scanning, cancelScan } = useStore();
+  const { scanning, cancelScan, scans, drives } = useStore();
   if (!scanning) return null;
   const p = scanning.progress;
+  const drive = drives.find((d) => d.root.toUpperCase() === scanning.root.toUpperCase());
+  const prev = scans[scanning.root.toUpperCase()];
+  // A cancelled scan stopped early: its file count would make this one look further along.
+  const frac = scanFraction(p, prev && !prev.cancelled ? prev.files : undefined, drive ? drive.total - drive.free : 0);
+  const elapsed = Date.now() - scanning.startedAt;
+  // Too early, the pace is mostly the first big files: wait before guessing.
+  const left = frac && elapsed > 15_000 && frac > 0.03 ? (elapsed * (1 - frac)) / frac : null;
   return (
     <div className="card card-pad scan-state">
       <div className="pulse-ring">
@@ -187,6 +206,16 @@ function Scanning() {
         <div className="muted num" style={{ margin: "2px 0 6px" }}>
           已扫描 {formatCount(p?.files ?? 0)} 个文件 · {formatBytes(p?.bytes ?? 0)} · {formatCount(p?.dirs ?? 0)} 个文件夹
         </div>
+        <div className="muted num" style={{ fontSize: 12.5, marginBottom: 6 }}>
+          已用时 {formatDuration(elapsed)}
+          {frac !== null && ` · 约 ${Math.floor(frac * 100)}%`}
+          {left !== null && ` · 预计还要 ${formatDuration(Math.max(left, 5_000), true)}`}
+        </div>
+        {frac !== null && (
+          <div className="bar" style={{ marginBottom: 6 }}>
+            <span style={{ width: `${frac * 100}%`, background: "var(--grad)" }} />
+          </div>
+        )}
         <div className="scan-path">{p?.current || "准备中…"}</div>
       </div>
       <button className="btn" onClick={cancelScan}>
