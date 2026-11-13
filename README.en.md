@@ -35,7 +35,7 @@ Most cleaners either only empty temp folders, or "boost" your PC without telling
 
 - **Accounts for every gigabyte first** — by category, folder and program, measuring what files *actually* occupy (OneDrive placeholders, sparse/compressed files and hard links are handled).
 - **Lets you decide** — every item says what it is and what deleting it costs, rated safe / careful / confirm; only safe items are pre-selected.
-- **Stays out of the way** — no ads, no services, no autostart; scans and background work run at reduced priority on a few threads.
+- **Stays out of the way** — no ads, no services, no autostart; background work runs at the lowest Windows priority on a few threads.
 
 It is especially useful for developers: Gradle and Android SDK/emulator data, `node_modules`, Rust `target`, package manager caches, idle Git worktrees and ever-growing WSL/Docker `.vhdx` disks are often the real culprits.
 

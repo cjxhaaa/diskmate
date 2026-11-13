@@ -390,6 +390,8 @@ export const api = {
   onAppUninstall: (h: (r: UninstallResult) => void) => on("app-uninstall", h),
   onScanProgress: (h: (p: ScanProgress) => void) => on("scan-progress", h),
   onScanDone: (h: (s: ScanSummary) => void) => on("scan-done", h),
+  /** The scan of the given root broke off with an internal error; nothing was saved. */
+  onScanFailed: (h: (root: string) => void) => on("scan-failed", h),
   onAnalyzeProgress: (h: (p: AnalyzeProgress) => void) => on("analyze-progress", h),
   onCleanProgress: (h: (p: CleanProgress) => void) => on("clean-progress", h),
 };

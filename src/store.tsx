@@ -214,6 +214,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         void refreshDrives();
         if (!analysisStarted.current) analyze();
       }),
+      api.onScanFailed((r) => {
+        setScanning(null);
+        toast(`扫描 ${r} 时出错中止了，可以再试一次`);
+      }),
       api.onAnalyzeProgress((p) => setAnalysis((a) => (a.status === "loading" ? { ...a, progress: p } : a))),
       api.onAppMeasured((m) =>
         setApps((list) => list?.map((a) => (a.id === m.id ? { ...a, ...m, measured: true } : a)) ?? null),
@@ -235,7 +239,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       ),
     ];
     return () => offs.forEach((p) => p.then((off) => off()));
-  }, [analyze, refreshDrives]);
+  }, [analyze, refreshDrives, toast]);
 
   // Launch: show the system drive's last scan, however old (the overview says when it was taken).
   // A scan is always the user's call — reading the whole disk, minutes on a hard disk, is not

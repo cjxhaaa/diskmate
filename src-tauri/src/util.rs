@@ -471,17 +471,6 @@ pub fn passive_pool() -> &'static rayon::ThreadPool {
     })
 }
 
-/// Below-normal CPU priority, but normal disk priority. The main pool runs what the user is
-/// waiting on (a scan, a size): background mode would also drop its disk I/O to "very low", and
-/// on a hard disk with anything else reading (Defender, Windows Update) that starves a scan for
-/// hours.
-fn below_normal_thread() {
-    use windows::Win32::System::Threading::{
-        GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL,
-    };
-    let _ = unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL) };
-}
-
 pub fn init_worker_pool() {
     let logical = std::thread::available_parallelism()
         .map(|n| n.get())
@@ -489,6 +478,6 @@ pub fn init_worker_pool() {
     let _ = rayon::ThreadPoolBuilder::new()
         .num_threads((logical / 4).clamp(2, 6))
         .thread_name(|i| format!("diskmate-worker-{i}"))
-        .start_handler(|_| below_normal_thread())
+        .start_handler(|_| background_thread())
         .build_global();
 }

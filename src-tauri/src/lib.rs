@@ -209,10 +209,15 @@ fn start_scan(app: AppHandle, state: State<AppState>, root: String) -> Result<()
         });
     }
     std::thread::spawn(move || {
-        let data = scan::run(&root, &ctx);
+        let root_str = util::display(&root);
+        // Whatever happens in the walk, the progress loop stops and the UI hears the end: a
+        // panic here used to leave the scan card counting nothing forever, with "stop" doing
+        // nothing and no way to scan again short of restarting.
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| scan::run(&root, &ctx)));
         done.store(true, Ordering::Relaxed);
         let state = app.state::<AppState>();
-        let mut scanning = state.scanning.lock().unwrap();
+        let mut scanning = state.scanning.lock().unwrap_or_else(|e| e.into_inner());
         // A newer scan replaced this one: its result is stale, drop it.
         if !scanning
             .as_ref()
@@ -223,17 +228,30 @@ fn start_scan(app: AppHandle, state: State<AppState>, root: String) -> Result<()
         }
         *scanning = None;
         drop(scanning);
-        let summary = data.summary.clone();
-        let _ = history::save(&history_dir(&app), &data);
-        // History and categories are taken; the browser only needs folders of 1 MB and up.
-        let mut data = data;
-        scan::prune(&mut data.tree);
-        state
-            .scans
-            .lock()
-            .unwrap()
-            .insert(summary.root.to_uppercase(), Arc::new(data));
-        let _ = app.emit("scan-done", summary);
+        let finished = result.and_then(|data| {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let summary = data.summary.clone();
+                let _ = history::save(&history_dir(&app), &data);
+                // History and categories are taken; the browser only needs folders of 1 MB and up.
+                let mut data = data;
+                scan::prune(&mut data.tree);
+                state
+                    .scans
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(summary.root.to_uppercase(), Arc::new(data));
+                summary
+            }))
+        });
+        match finished {
+            Ok(summary) => {
+                let _ = app.emit("scan-done", summary);
+            }
+            // The panic itself is in crash.log.
+            Err(_) => {
+                let _ = app.emit("scan-failed", root_str);
+            }
+        }
     });
     Ok(())
 }
