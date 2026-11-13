@@ -118,8 +118,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return list;
   }, []);
 
-  // A scan and the cleanup check never read the disk at the same time: while a check runs, the
-  // backend pauses the scan (progress says so) and resumes it after.
   const startScan = useCallback(
     (target?: string) => {
       const r = target ?? root;

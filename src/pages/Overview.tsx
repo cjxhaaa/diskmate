@@ -194,11 +194,9 @@ function Scanning() {
   // A cancelled scan stopped early: its file count would make this one look further along.
   const frac = scanFraction(p, prev && !prev.cancelled ? prev.files : undefined, drive ? drive.total - drive.free : 0);
   const elapsed = Date.now() - scanning.startedAt;
-  const paused = !!p?.paused;
   // Too early, the pace is mostly the first big files: wait before guessing.
   // At the 99% cap the yardstick has run out (more files than last time): no honest guess left.
-  // Paused, the pace says nothing about what is left.
-  const left = !paused && frac && elapsed > 15_000 && frac > 0.03 && frac < 0.99 ? (elapsed * (1 - frac)) / frac : null;
+  const left = frac && elapsed > 15_000 && frac > 0.03 && frac < 0.99 ? (elapsed * (1 - frac)) / frac : null;
   return (
     <div className="card card-pad scan-state">
       <div className="pulse-ring">
@@ -213,7 +211,6 @@ function Scanning() {
           已用时 {formatDuration(elapsed)}
           {frac !== null && ` · 约 ${Math.floor(frac * 100)}%`}
           {left !== null && ` · 预计还要 ${formatDuration(Math.max(left, 5_000), true)}`}
-          {paused && " · 已暂停，先让智能清理检查完，马上继续"}
         </div>
         {frac !== null && (
           <div className="bar" style={{ marginBottom: 6 }}>

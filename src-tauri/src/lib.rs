@@ -313,8 +313,6 @@ struct AnalyzeProgress {
 async fn analyze_cleanup(app: AppHandle) -> Result<Vec<rules::CleanItem>, String> {
     let emitter = app.clone();
     let planned = tauri::async_runtime::spawn_blocking(move || {
-        // A running scan pauses meanwhile: the check is the quick one the user is waiting on.
-        let _aside = scan::step_aside();
         rules::analyze(|done, total, current| {
             let _ = emitter.emit(
                 "analyze-progress",

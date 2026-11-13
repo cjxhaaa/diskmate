@@ -457,9 +457,9 @@ pub fn processes() -> Vec<(u32, String)> {
         .collect()
 }
 
-/// The pool whole-disk scans run on, in background mode like the main one. A scan of its own
-/// because it pauses for the cleanup check (scan::step_aside): its threads sleeping must not be
-/// the threads the check needs.
+/// The pool whole-disk scans run on, in background mode like the main one. Its own threads, so a
+/// scan and the cleanup check (on the main pool) both run at once without one's jobs queueing
+/// behind the other's.
 pub fn scan_pool() -> &'static rayon::ThreadPool {
     static POOL: std::sync::OnceLock<rayon::ThreadPool> = std::sync::OnceLock::new();
     POOL.get_or_init(|| {

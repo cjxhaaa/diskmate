@@ -5,7 +5,7 @@ use crate::util::{display, entry_on_disk_len, home, list_dir, system_root, unix_
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -40,35 +40,12 @@ pub struct LargeFile {
     pub modified: u64,
 }
 
-/// Disk-heavy jobs the user is waiting on (the cleanup check) that a running scan steps aside for.
-/// A check takes seconds to a minute and a scan minutes: rather than make the check wait for the
-/// whole scan, or let the two fight over the disk (a scan took 152 s instead of 58 s), the scan
-/// pauses until the check is done.
-static STEP_ASIDE: AtomicUsize = AtomicUsize::new(0);
-
-/// Held while a job the scan should make way for runs.
-pub struct Aside(());
-
-impl Drop for Aside {
-    fn drop(&mut self) {
-        STEP_ASIDE.fetch_sub(1, Ordering::Relaxed);
-    }
-}
-
-/// Pauses any scan until the returned guard is dropped.
-pub fn step_aside() -> Aside {
-    STEP_ASIDE.fetch_add(1, Ordering::Relaxed);
-    Aside(())
-}
-
 #[derive(Default)]
 pub struct ScanCtx {
     pub files: AtomicU64,
     pub dirs: AtomicU64,
     pub bytes: AtomicU64,
     pub cancel: AtomicBool,
-    /// Waiting for a [`step_aside`] job to finish.
-    pub paused: AtomicBool,
     pub current: Mutex<String>,
     large: Mutex<Vec<LargeFile>>,
     seen_links: Mutex<std::collections::HashSet<u64>>,
@@ -81,7 +58,6 @@ pub struct Progress {
     pub dirs: u64,
     pub bytes: u64,
     pub current: String,
-    pub paused: bool,
 }
 
 impl ScanCtx {
@@ -91,7 +67,6 @@ impl ScanCtx {
             dirs: self.dirs.load(Ordering::Relaxed),
             bytes: self.bytes.load(Ordering::Relaxed),
             current: self.current.lock().unwrap().clone(),
-            paused: self.paused.load(Ordering::Relaxed),
         }
     }
 }
@@ -117,18 +92,6 @@ fn scan_dir(path: &Path, name: String, ctx: &ScanCtx, vol: &Volume, all_links: b
     };
     if ctx.cancel.load(Ordering::Relaxed) {
         return node;
-    }
-    // Scans run on their own pool (see util::scan_pool), so these threads waiting never hold up
-    // the job they wait for.
-    if STEP_ASIDE.load(Ordering::Relaxed) > 0 {
-        ctx.paused.store(true, Ordering::Relaxed);
-        while STEP_ASIDE.load(Ordering::Relaxed) > 0 && !ctx.cancel.load(Ordering::Relaxed) {
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-        ctx.paused.store(false, Ordering::Relaxed);
-        if ctx.cancel.load(Ordering::Relaxed) {
-            return node;
-        }
     }
     let dirs_seen = ctx.dirs.fetch_add(1, Ordering::Relaxed);
     if dirs_seen.is_multiple_of(97) {
@@ -645,48 +608,6 @@ mod tests {
         assert_eq!(tree.own, 10);
         assert_eq!(tree.children[0].name, "a");
         assert_eq!(tree.children[0].size, 1500);
-    }
-
-    /// One test, not two: the pause is global, so two tests holding it at once would wait on
-    /// each other.
-    #[test]
-    fn a_scan_pauses_while_the_cleanup_check_runs() {
-        use std::time::Duration;
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("f.bin"), vec![0u8; 10]).unwrap();
-        let vol = Volume {
-            ntfs: false,
-            system_root: system_root(),
-        };
-
-        // Waits while the check runs, then finishes the walk.
-        let ctx = ScanCtx::default();
-        let aside = step_aside();
-        std::thread::scope(|s| {
-            let scan = s.spawn(|| scan_dir(dir.path(), "root".into(), &ctx, &vol, false));
-            std::thread::sleep(Duration::from_millis(300));
-            assert!(
-                ctx.paused.load(Ordering::Relaxed),
-                "paused while the check runs"
-            );
-            assert_eq!(ctx.dirs.load(Ordering::Relaxed), 0, "nothing read yet");
-            drop(aside);
-            assert_eq!(scan.join().unwrap().size, 10);
-        });
-        assert!(!ctx.paused.load(Ordering::Relaxed));
-
-        // Stopping a paused scan does not wait for the check.
-        let ctx = ScanCtx::default();
-        let aside = step_aside();
-        std::thread::scope(|s| {
-            let scan = s.spawn(|| scan_dir(dir.path(), "root".into(), &ctx, &vol, false));
-            std::thread::sleep(Duration::from_millis(150));
-            ctx.cancel.store(true, Ordering::Relaxed);
-            let t = Instant::now();
-            assert_eq!(scan.join().unwrap().size, 0);
-            assert!(t.elapsed() < Duration::from_millis(500));
-        });
-        drop(aside);
     }
 
     /// The WinSxS case: one small file under two names counts once.
