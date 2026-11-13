@@ -45,7 +45,7 @@ It is especially useful for developers: Gradle and Android SDK/emulator data, `n
 - **Smart cleanup** — system junk, developer caches, browser caches, old IDE data, idle worktrees; reports the space actually freed.
 - **Apps** — program size *plus* the data each app keeps in AppData, last used date; runs the app's own uninstaller, then offers to remove leftovers.
 - **Space map & history** — drill-down treemap; compare scans to see what has been growing.
-- **File tidy-up** — installers you already installed, archives you already extracted, content-verified duplicates (BLAKE3), large files. Deletes go to the Recycle Bin by default.
+- **File tidy-up** — installers you already installed, archives you already extracted, content-verified duplicates (BLAKE3), large files. Deletes go to the Recycle Bin by default; files you want to keep can be moved to another drive instead.
 - **Move to another drive** — moves big folders (chat files, SDKs, caches) to D: and leaves a junction behind, so apps keep working unchanged; copies, verifies, then deletes, with automatic rollback, and anything moved can be moved back to C: in one click. Also compacts WSL/Docker virtual disks.
 - **Startup apps** — every startup entry with a "fine to turn off / better kept" hint; uses the same switch as Task Manager.
 - **Performance** — a Task-Manager-style live view of CPU (per core), memory, disks, network and GPU, plus the programs using them.

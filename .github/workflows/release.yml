@@ -34,13 +34,29 @@ jobs:
 
       - run: npm ci
 
+      # The release page shows what changed instead of only linking to the CHANGELOG: this
+      # version's section of CHANGELOG.md, plus which file to download.
+      - name: Release notes
+        id: notes
+        shell: pwsh
+        run: |
+          $v = "${{ inputs.tag }}".TrimStart("v")
+          $lines = Get-Content CHANGELOG.md -Encoding utf8
+          $start = [array]::FindIndex([string[]]$lines, [Predicate[string]]{ param($l) $l -like "## ``[$v``]*" })
+          if ($start -lt 0) { throw "CHANGELOG.md has no section for $v" }
+          $end = [array]::FindIndex([string[]]$lines, $start + 1, [Predicate[string]]{ param($l) $l -like "## *" })
+          if ($end -lt 0) { $end = $lines.Count }
+          $body = ($lines[($start + 1)..($end - 1)] -join "`n").Trim()
+          $body += "`n`n### 下载`n`n- **安装版**：DiskMate_${v}_x64-setup.exe（推荐）`n- **便携版**：DiskMate_${v}_x64_portable.zip，解压即用`n- **Scoop**：``scoop update diskmate```n- DiskMate_${v}_x64_symbols.zip 是调试符号，只用来分析崩溃文件，不需要下载。"
+          "body<<NOTES_EOF`n$body`nNOTES_EOF" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ inputs.tag }}
           releaseName: DiskMate ${{ inputs.tag }}
-          releaseBody: 更新内容见 [CHANGELOG](https://github.com/${{ github.repository }}/blob/master/CHANGELOG.md)。
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: true
           prerelease: false
 
