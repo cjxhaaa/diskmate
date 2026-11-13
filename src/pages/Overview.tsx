@@ -105,7 +105,11 @@ function ReleaseCard({ onGoClean }: { onGoClean: () => void }) {
         </div>
         <div className="skeleton" style={{ height: 44, width: "60%" }} />
         <div className="muted" style={{ fontSize: 13 }}>
-          {p ? `正在检查「${p.current}」（${p.done}/${p.total}）` : "正在查找可以清理的内容…"}
+          {analysis.status === "loading" && analysis.queued
+            ? "等扫描完成后再检查，免得两件事一起抢磁盘…"
+            : p
+              ? `正在检查「${p.current}」（${p.done}/${p.total}）`
+              : "正在查找可以清理的内容…"}
         </div>
         {[0, 1, 2].map((i) => (
           <div key={i} className="skeleton" style={{ height: 40 }} />
@@ -193,6 +197,24 @@ function Scanning() {
   const prev = scans[scanning.root.toUpperCase()];
   // A cancelled scan stopped early: its file count would make this one look further along.
   const frac = scanFraction(p, prev && !prev.cancelled ? prev.files : undefined, drive ? drive.total - drive.free : 0);
+  if (scanning.queued) {
+    return (
+      <div className="card card-pad scan-state">
+        <div className="pulse-ring">
+          <ScanSearch size={26} />
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 650, fontSize: 16 }}>马上扫描 {scanning.root}</div>
+          <div className="muted" style={{ margin: "2px 0 6px" }}>
+            正在查找可以清理的内容，完成后自动开始扫描。两件事都要大量读磁盘，一件一件来更快，也不拖慢你正在用的程序。
+          </div>
+        </div>
+        <button className="btn" onClick={cancelScan}>
+          <Square size={14} /> 取消
+        </button>
+      </div>
+    );
+  }
   const elapsed = Date.now() - scanning.startedAt;
   // Too early, the pace is mostly the first big files: wait before guessing.
   // At the 99% cap the yardstick has run out (more files than last time): no honest guess left.
@@ -271,7 +293,7 @@ export function Overview({ onGoClean }: { onGoClean: () => void }) {
         <div className="overview-actions">
           {drives.length > 1 && <DrivePicker drives={drives} value={root} onChange={setRoot} />}
           <span className="faint scan-when" title={summary ? "扫描结果会一直保留，需要时再手动重新扫描" : undefined}>
-            {scanningHere ? "正在扫描…" : summary ? `扫描于 ${scannedAgo(summary.scannedAt)}` : "还没扫描过"}
+            {scanningHere ? (scanning?.queued ? "等待扫描…" : "正在扫描…") : summary ? `扫描于 ${scannedAgo(summary.scannedAt)}` : "还没扫描过"}
           </span>
           <button
             className="btn scan-btn"

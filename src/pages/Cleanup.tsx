@@ -84,7 +84,8 @@ function ItemRow({
 function Analyzing() {
   const { analysis } = useStore();
   const p = analysis.status === "loading" ? analysis.progress : null;
-  const pct = p ? (p.done / p.total) * 100 : 4;
+  const queued = analysis.status === "loading" && !!analysis.queued;
+  const pct = p ? (p.done / p.total) * 100 : queued ? 0 : 4;
   return (
     <div className="card card-pad">
       <div style={{ display: "flex", gap: 14, alignItems: "center", marginBottom: 14 }}>
@@ -92,9 +93,13 @@ function Analyzing() {
           <Sparkles size={20} />
         </div>
         <div>
-          <div style={{ fontWeight: 650 }}>正在查找可以清理的内容</div>
+          <div style={{ fontWeight: 650 }}>{queued ? "等扫描完成后再检查" : "正在查找可以清理的内容"}</div>
           <div className="muted" style={{ fontSize: 13 }}>
-            {p ? `${p.current}（${p.done}/${p.total}）` : "检查临时文件、开发缓存、应用缓存…"}
+            {queued
+              ? "磁盘正在扫描，两件事一起抢磁盘会更慢，扫描一结束就自动开始"
+              : p
+                ? `${p.current}（${p.done}/${p.total}）`
+                : "检查临时文件、开发缓存、应用缓存…"}
           </div>
         </div>
       </div>
