@@ -168,7 +168,7 @@ function HeroAction({ onGoClean }: { onGoClean: () => void }) {
   const safe = analysis.items.filter((i) => !i.guideOnly && i.risk === "safe").reduce((s, i) => s + i.size, 0);
   return (
     <button className="btn btn-primary btn-lg" onClick={onGoClean} style={{ position: "relative" }}>
-      <Sparkles size={18} /> 一键释放 {formatBytes(safe)}
+      <Sparkles size={18} /> 去清理 {formatBytes(safe)}
     </button>
   );
 }
