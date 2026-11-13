@@ -135,7 +135,7 @@ DiskMate 的想法很简单：
 <details>
 <summary><b>数据存在哪里？卸载干净吗？</b></summary>
 
-扫描历史、缓存和设置都在 `%LOCALAPPDATA%\com.cjxhaaa.diskmate`。卸载时可以勾选一起删除。DiskMate 不写注册表启动项，也不安装服务。
+扫描历史、缓存和设置都在 `%LOCALAPPDATA%\com.cjxhaaa.diskmate`；万一闪退，那里的 `crashes` 文件夹会留下崩溃转储（最多 5 个），反馈问题时附上能直接定位原因。卸载时可以勾选一起删除。DiskMate 不写注册表启动项，也不安装服务。
 
 </details>
 

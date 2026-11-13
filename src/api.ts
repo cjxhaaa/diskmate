@@ -86,6 +86,11 @@ export interface Outcome {
   error: string | null;
 }
 
+/** A move's outcome, plus the paths that actually left. */
+export interface MoveOutcome extends Outcome {
+  moved: string[];
+}
+
 export interface CleanResult {
   id: string;
   title: string;
@@ -338,6 +343,8 @@ export const api = {
   analyzeCleanup: () => call<CleanItem[]>("analyze_cleanup"),
   runCleanup: (ids: string[]) => call<CleanResult[]>("run_cleanup", { ids }),
   deleteFiles: (paths: string[], permanent: boolean) => call<Outcome>("delete_files", { paths, permanent }),
+  /** Moves hand-picked files to the same path on `driveRoot` ("D:\\"). */
+  moveFiles: (paths: string[], driveRoot: string) => call<MoveOutcome>("move_files", { paths, driveRoot }),
   scanHistory: (root: string) => call<ScanSummary[]>("scan_history", { root }),
   scanDiff: (root: string, baseAt: number, currentAt: number) => call<ScanDiff>("scan_diff", { root, baseAt, currentAt }),
   analyzeDownloads: () => call<DownloadItem[]>("analyze_downloads"),
@@ -355,6 +362,10 @@ export const api = {
   onDupesProgress: (h: (p: DupeProgress) => void) => on("dupes-progress", h),
   onDupesDone: (h: (g: DupeGroup[]) => void) => on("dupes-done", h),
   revealPath: (path: string) => call<void>("reveal_path", { path }),
+  /** The crash dump from a crash not yet shown to the user, or null. */
+  crashReport: () => call<string | null>("crash_report"),
+  crashReportSeen: () => call<void>("crash_report_seen"),
+  openFeedback: () => call<void>("open_feedback"),
   listStartup: () => call<StartupItem[]>("list_startup"),
   setStartupEnabled: (id: string, enabled: boolean) => call<void>("set_startup_enabled", { id, enabled }),
   perfSample: () => call<PerfSample>("perf_sample"),
@@ -383,6 +394,8 @@ export const api = {
   onAppUninstall: (h: (r: UninstallResult) => void) => on("app-uninstall", h),
   onScanProgress: (h: (p: ScanProgress) => void) => on("scan-progress", h),
   onScanDone: (h: (s: ScanSummary) => void) => on("scan-done", h),
+  /** The scan of the given root broke off with an internal error; nothing was saved. */
+  onScanFailed: (h: (root: string) => void) => on("scan-failed", h),
   onAnalyzeProgress: (h: (p: AnalyzeProgress) => void) => on("analyze-progress", h),
   onCleanProgress: (h: (p: CleanProgress) => void) => on("clean-progress", h),
 };

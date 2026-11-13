@@ -265,23 +265,30 @@ pub fn execute(target: &Target) -> Outcome {
     }
 }
 
+/// Whether a hand-picked path may be deleted or moved: inside the user folder, and not part of an
+/// app's own data.
+pub fn user_path_ok(p: &Path) -> bool {
+    // App data (AppData) and tool data (.android, .gradle, ...) are left to the app that owns
+    // them — one file pulled out of either breaks that app.
+    // Chat apps keep received files outside AppData; deleting one breaks it in the chat history.
+    let inside_app_data = p.components().any(|c| {
+        let name = c.as_os_str().to_string_lossy();
+        name.starts_with('.')
+            || name.eq_ignore_ascii_case("appdata")
+            || name.eq_ignore_ascii_case("xwechat_files")
+            || name.eq_ignore_ascii_case("WeChat Files")
+            || name.eq_ignore_ascii_case("Tencent Files")
+    });
+    allowed(p) && p.exists() && !inside_app_data
+}
+
 /// Deletes files and folders the user picked by hand (large files, Downloads, duplicates): to the
 /// Recycle Bin, or for good with `permanent`. Each must be inside the user folder.
 pub fn remove_user_paths(paths: &[PathBuf], permanent: bool) -> Outcome {
     let mut out = Outcome::default();
+    let mut to_recycle = Vec::new();
     for p in paths {
-        // App data (AppData) and tool data (.android, .gradle, ...) are left to the app that owns
-        // them — one file pulled out of either breaks that app.
-        // Chat apps keep received files outside AppData; deleting one breaks it in the chat history.
-        let inside_app_data = p.components().any(|c| {
-            let name = c.as_os_str().to_string_lossy();
-            name.starts_with('.')
-                || name.eq_ignore_ascii_case("appdata")
-                || name.eq_ignore_ascii_case("xwechat_files")
-                || name.eq_ignore_ascii_case("WeChat Files")
-                || name.eq_ignore_ascii_case("Tencent Files")
-        });
-        if !allowed(p) || !p.exists() || inside_app_data {
+        if !user_path_ok(p) {
             out.skipped_files += 1;
             continue;
         }
@@ -303,18 +310,83 @@ pub fn remove_user_paths(paths: &[PathBuf], permanent: bool) -> Outcome {
                 files: 1,
             }
         };
-        match trash::delete(p) {
-            Ok(()) => {
-                out.freed += size.bytes;
-                out.removed_files += size.files;
-            }
-            Err(e) => {
-                out.skipped_files += 1;
-                out.error.get_or_insert(e.to_string());
-            }
+        to_recycle.push((p.clone(), size));
+    }
+    if to_recycle.is_empty() {
+        return out;
+    }
+    let list: Vec<PathBuf> = to_recycle.iter().map(|(p, _)| p.clone()).collect();
+    let result = recycle(&list);
+    // Whatever the helper said, what is gone from disk is what went to the Recycle Bin.
+    for (p, size) in &to_recycle {
+        if p.exists() {
+            out.skipped_files += 1;
+        } else {
+            out.freed += size.bytes;
+            out.removed_files += size.files;
         }
     }
+    if let Err(e) = result {
+        out.error.get_or_insert(e);
+    }
     out
+}
+
+/// The argument that makes this program a Recycle Bin helper instead of the app.
+pub const RECYCLE_ARG: &str = "--recycle";
+
+/// Sends `paths` to the Recycle Bin from a short-lived copy of this program.
+///
+/// The Recycle Bin is only reachable through the shell (`IFileOperation`), which loads every
+/// installed shell extension and copy hook into the calling process — security suites hook it to
+/// watch deletions. When one of them crashes, the process goes with it; done in-process, that is
+/// DiskMate vanishing the moment "delete" is clicked. In a helper, the helper dies, the app stays,
+/// and whatever was not recycled is reported as not deleted.
+fn recycle(paths: &[PathBuf]) -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let list = std::env::temp_dir().join(format!(
+        "diskmate-recycle-{}-{}.txt",
+        std::process::id(),
+        util::unix_nanos()
+    ));
+    let body: Vec<String> = paths.iter().map(|p| display(p)).collect();
+    std::fs::write(&list, body.join("\n")).map_err(|e| e.to_string())?;
+    // A "too big for the Recycle Bin, delete for good?" prompt from the helper must be able to
+    // come to the front, above this window.
+    unsafe {
+        let _ = windows::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(u32::MAX);
+    }
+    let status = util::command(&exe.to_string_lossy())
+        .arg(RECYCLE_ARG)
+        .arg(&list)
+        .status();
+    let _ = std::fs::remove_file(&list);
+    match status {
+        Ok(s) if s.success() => Ok(()),
+        // The helper ran and reported items it could not recycle (in use, no permission).
+        Ok(s) if s.code() == Some(1) => Err("有些文件没能移到回收站，可能正被其他程序占用".into()),
+        Ok(s) => Err(format!(
+            "回收站操作意外中止（代码 {:#x}），可能是安全软件拦截了删除。可以重试，或勾选「直接删除」",
+            s.code().unwrap_or(-1) as u32
+        )),
+        Err(e) => Err(format!("无法启动删除：{e}")),
+    }
+}
+
+/// The helper side of [`recycle`]: `diskmate.exe --recycle <list file>`. Returns the exit code.
+pub fn recycle_helper(list: &Path) -> i32 {
+    let Ok(body) = std::fs::read_to_string(list) else {
+        return 2;
+    };
+    let mut failed = false;
+    for line in body.lines().filter(|l| !l.trim().is_empty()) {
+        let p = PathBuf::from(line);
+        // Checked again here: the helper must not become a way to delete anything at all.
+        if !user_path_ok(&p) || trash::delete(&p).is_err() {
+            failed = true;
+        }
+    }
+    i32::from(failed)
 }
 
 #[cfg(test)]

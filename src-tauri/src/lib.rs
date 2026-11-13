@@ -1,6 +1,7 @@
 mod apps;
 mod cache;
 mod clean;
+mod crash;
 mod downloads;
 mod dupes;
 mod filemeta;
@@ -209,10 +210,16 @@ fn start_scan(app: AppHandle, state: State<AppState>, root: String) -> Result<()
         });
     }
     std::thread::spawn(move || {
-        let data = scan::run(&root, &ctx);
+        let root_str = util::display(&root);
+        // Whatever happens in the walk, the progress loop stops and the UI hears the end: a
+        // panic here used to leave the scan card counting nothing forever, with "stop" doing
+        // nothing and no way to scan again short of restarting.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            util::scan_pool().install(|| scan::run(&root, &ctx))
+        }));
         done.store(true, Ordering::Relaxed);
         let state = app.state::<AppState>();
-        let mut scanning = state.scanning.lock().unwrap();
+        let mut scanning = state.scanning.lock().unwrap_or_else(|e| e.into_inner());
         // A newer scan replaced this one: its result is stale, drop it.
         if !scanning
             .as_ref()
@@ -223,17 +230,30 @@ fn start_scan(app: AppHandle, state: State<AppState>, root: String) -> Result<()
         }
         *scanning = None;
         drop(scanning);
-        let summary = data.summary.clone();
-        let _ = history::save(&history_dir(&app), &data);
-        // History and categories are taken; the browser only needs folders of 1 MB and up.
-        let mut data = data;
-        scan::prune(&mut data.tree);
-        state
-            .scans
-            .lock()
-            .unwrap()
-            .insert(summary.root.to_uppercase(), Arc::new(data));
-        let _ = app.emit("scan-done", summary);
+        let finished = result.and_then(|data| {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let summary = data.summary.clone();
+                let _ = history::save(&history_dir(&app), &data);
+                // History and categories are taken; the browser only needs folders of 1 MB and up.
+                let mut data = data;
+                scan::prune(&mut data.tree);
+                state
+                    .scans
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(summary.root.to_uppercase(), Arc::new(data));
+                summary
+            }))
+        });
+        match finished {
+            Ok(summary) => {
+                let _ = app.emit("scan-done", summary);
+            }
+            // The panic itself is in crash.log.
+            Err(_) => {
+                let _ = app.emit("scan-failed", root_str);
+            }
+        }
     });
     Ok(())
 }
@@ -382,6 +402,18 @@ async fn run_cleanup(app: AppHandle, ids: Vec<String>) -> Result<Vec<CleanResult
 async fn delete_files(paths: Vec<String>, permanent: bool) -> Result<clean::Outcome, String> {
     let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
     tauri::async_runtime::spawn_blocking(move || clean::remove_user_paths(&paths, permanent))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Files or folders picked by hand, moved to the same path on another drive.
+#[tauri::command]
+async fn move_files(
+    paths: Vec<String>,
+    drive_root: String,
+) -> Result<migrate::MoveOutcome, String> {
+    let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+    tauri::async_runtime::spawn_blocking(move || migrate::move_user_paths(&paths, &drive_root))
         .await
         .map_err(|e| e.to_string())
 }
@@ -953,6 +985,80 @@ fn webview_memory_low(window: &tauri::WebviewWindow, low: bool) {
     });
 }
 
+/// The crash dump left by a crash the user has not been told about yet (see crash::unseen).
+#[tauri::command]
+fn crash_report() -> Option<String> {
+    crash::unseen().map(|p| util::display(&p))
+}
+
+#[tauri::command]
+fn crash_report_seen() {
+    crash::mark_seen();
+}
+
+/// Opens the bug report form in the default browser. The address is fixed here, not taken from
+/// the page. ShellExecute, not `explorer.exe <url>`: handed a URL with a query, Explorer opened a
+/// folder window and no browser.
+#[tauri::command]
+fn open_feedback() -> Result<(), String> {
+    use windows::core::w;
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    let result = unsafe {
+        ShellExecuteW(
+            None,
+            w!("open"),
+            w!("https://github.com/cjxhaaa/diskmate/issues/new?template=bug_report.yml"),
+            None,
+            None,
+            SW_SHOWNORMAL,
+        )
+    };
+    // Above 32 is success; anything else is an error code.
+    if result.0 as isize > 32 {
+        Ok(())
+    } else {
+        Err(format!("没能打开浏览器（{}）", result.0 as isize))
+    }
+}
+
+/// Runs a helper job when the command line asks for one, returning its exit code; `None` means
+/// start the app as usual.
+pub fn run_helper() -> Option<i32> {
+    let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    if args.len() == 3 && args[1] == clean::RECYCLE_ARG {
+        return Some(clean::recycle_helper(std::path::Path::new(&args[2])));
+    }
+    None
+}
+
+/// Appends every panic to `crash.log` in the data folder, with a dump of where every thread was
+/// (crash::write_dump), so a report of DiskMate closing on its own can come with where it happened.
+fn log_panics(dir: PathBuf) {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        use std::io::Write;
+        let _ = std::fs::create_dir_all(&dir);
+        let dump = crash::write_dump(None);
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join("crash.log"))
+        {
+            let _ = writeln!(
+                f,
+                "[{}] v{} thread '{}': {info}{}",
+                util::unix_secs(std::time::SystemTime::now()),
+                env!("CARGO_PKG_VERSION"),
+                std::thread::current().name().unwrap_or("?"),
+                dump.map(|d| format!(" (dump: {})", util::display(&d)))
+                    .unwrap_or_default(),
+            );
+        }
+        default(info);
+    }));
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     util::init_worker_pool();
@@ -964,6 +1070,20 @@ pub fn run() {
         }))
         .setup(|app| {
             let dir = data_dir(app.handle());
+            crash::init(&dir);
+            log_panics(dir.clone());
+            // Debug builds only: `DISKMATE_CRASH_AFTER_SECS=5` crashes the app on purpose, to see
+            // the dump being written and the notice on the next launch.
+            #[cfg(debug_assertions)]
+            if let Some(secs) = std::env::var("DISKMATE_CRASH_AFTER_SECS")
+                .ok()
+                .and_then(|s| s.parse::<u64>().ok())
+            {
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_secs(secs));
+                    unsafe { std::ptr::write_volatile(8 as *mut u8, 1) };
+                });
+            }
             cache::init(dir.clone());
             tray::setup(app.handle(), &dir, |app| {
                 let app = app.clone();
@@ -1013,6 +1133,10 @@ pub fn run() {
             analyze_cleanup,
             run_cleanup,
             delete_files,
+            move_files,
+            crash_report,
+            crash_report_seen,
+            open_feedback,
             scan_history,
             scan_diff,
             analyze_downloads,

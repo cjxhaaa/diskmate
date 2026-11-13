@@ -276,6 +276,14 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
       }
       return out as T;
     }
+    case "crash_report":
+      return null as T;
+    case "crash_report_seen":
+    case "open_feedback":
+      return undefined as T;
+    case "move_files":
+      await sleep(1200);
+      return { freed: 1.3 * GB, removedFiles: 3, skippedFiles: 0, error: null, moved: (args?.paths as string[]) ?? [] } as T;
     case "delete_files":
     case "delete_duplicates":
       await sleep(400);

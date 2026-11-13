@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Activity, AppWindow, Crosshair, FolderSearch, HardDrive, LayoutDashboard, LayoutGrid, Power, Sparkles, TrendingUp, Truck } from "lucide-react";
+import { Activity, AppWindow, Check, Copy, Crosshair, FolderSearch, HardDrive, LayoutDashboard, LayoutGrid, Power, Sparkles, TrendingUp, Truck } from "lucide-react";
 import { api } from "./api";
 import { Dialog, Toasts, UsageBar } from "./components/ui";
 import { formatBytes } from "./format";
@@ -60,6 +60,72 @@ function CloseChoice({ onDone }: { onDone: () => void }) {
       <div className="dialog-actions">
         <button className="btn" onClick={onDone}>
           取消
+        </button>
+      </div>
+    </Dialog>
+  );
+}
+
+/**
+ * Shown once after a crash: the crashed process could show nothing, so the next launch says what
+ * happened and how a crash file helps. Each file is offered once.
+ */
+function CrashNotice() {
+  const { toast } = useStore();
+  const [dump, setDump] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    void api.crashReport().then(setDump).catch(() => {});
+  }, []);
+  if (!dump) return null;
+  const close = () => {
+    setDump(null);
+    void api.crashReportSeen();
+  };
+  return (
+    <Dialog onClose={close}>
+      <div className="dialog-body">
+        <h2 className="dialog-title">DiskMate 上次运行时出错了</h2>
+        <div className="muted" style={{ fontSize: 13.5, lineHeight: 1.7 }}>
+          当时的情况已经记录在一个崩溃文件里。方便的话请到 GitHub 反馈这个问题，并附上这个文件（先压缩成 .zip），能帮我直接找到原因。
+        </div>
+        <div className="dialog-list" style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 6px 6px 14px", fontSize: 12.5 }}>
+          <span className="num" title={dump} style={{ flex: 1, minWidth: 0, wordBreak: "break-all", userSelect: "text", cursor: "text" }}>
+            {dump}
+          </span>
+          <button
+            className="btn"
+            style={{ flex: "none" }}
+            onClick={() =>
+              void navigator.clipboard.writeText(dump).then(
+                () => setCopied(true),
+                () => toast("复制失败，可以直接选中路径再按 Ctrl+C"),
+              )
+            }
+          >
+            {copied ? <Check size={15} /> : <Copy size={15} />} {copied ? "已复制" : "复制"}
+          </button>
+        </div>
+        <div className="faint" style={{ fontSize: 12.5 }}>
+          文件里可能带有你电脑上的文件路径等信息，介意的话也可以只描述问题，或者先在反馈里说一声再私下发给我。
+        </div>
+      </div>
+      <div className="dialog-actions">
+        <button className="btn" onClick={close}>
+          知道了
+        </button>
+        <button className="btn" onClick={() => void api.revealPath(dump)}>
+          打开文件所在位置
+        </button>
+        <button
+          className="btn btn-primary"
+          onClick={() => {
+            api.openFeedback().catch((e) => toast(String(e)));
+            void api.revealPath(dump);
+            close();
+          }}
+        >
+          去反馈
         </button>
       </div>
     </Dialog>
@@ -132,6 +198,7 @@ function Shell() {
       </main>
       <Toasts />
       {askClose && <CloseChoice onDone={() => setAskClose(false)} />}
+      <CrashNotice />
     </div>
   );
 }

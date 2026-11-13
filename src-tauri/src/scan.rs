@@ -1,9 +1,7 @@
 //! Whole-drive scan: a size tree for the space map, per-category totals for the overview, and the
 //! largest files.
 
-use crate::util::{
-    display, hard_link_identity, home, is_link, long_path, on_disk_len_at, unix_secs,
-};
+use crate::util::{display, entry_on_disk_len, home, list_dir, system_root, unix_secs};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -50,7 +48,7 @@ pub struct ScanCtx {
     pub cancel: AtomicBool,
     pub current: Mutex<String>,
     large: Mutex<Vec<LargeFile>>,
-    seen_links: Mutex<std::collections::HashSet<(u32, u64)>>,
+    seen_links: Mutex<std::collections::HashSet<u64>>,
 }
 
 #[derive(Serialize, Clone)]
@@ -73,7 +71,16 @@ impl ScanCtx {
     }
 }
 
-fn scan_dir(path: &Path, name: String, ctx: &ScanCtx) -> Node {
+/// What every folder of one scan needs to know about the volume.
+struct Volume {
+    /// Hard links can be recognised by file id (see [`crate::util::is_ntfs`]).
+    ntfs: bool,
+    /// `C:\Windows`: WinSxS hard-links most of System32, Servicing and the driver store, so here
+    /// every file is checked, not just big ones.
+    system_root: PathBuf,
+}
+
+fn scan_dir(path: &Path, name: String, ctx: &ScanCtx, vol: &Volume, all_links: bool) -> Node {
     let mut node = Node {
         name,
         size: 0,
@@ -90,56 +97,79 @@ fn scan_dir(path: &Path, name: String, ctx: &ScanCtx) -> Node {
     if dirs_seen.is_multiple_of(97) {
         *ctx.current.lock().unwrap() = display(path);
     }
-    let rd = match std::fs::read_dir(long_path(path)) {
-        Ok(rd) => rd,
+    let entries = match list_dir(path) {
+        Ok(entries) => entries,
         Err(_) => {
             node.denied = true;
             return node;
         }
     };
     let mut subdirs = Vec::new();
-    let mut own_bytes = 0u64;
-    for entry in rd.flatten() {
-        let Ok(md) = entry.metadata() else { continue };
-        if is_link(&md) {
+    let mut files = Vec::new();
+    for entry in entries {
+        if entry.is_link() {
             continue;
         }
-        if md.is_dir() {
-            subdirs.push((
-                entry.path(),
-                entry.file_name().to_string_lossy().into_owned(),
-            ));
+        if entry.is_dir() {
+            subdirs.push(entry.name);
             continue;
         }
-        let file_path = entry.path();
-        let mut len = on_disk_len_at(&file_path, &md);
-        // A big file reachable under two names (a hard link) is one file on disk. Checking costs
-        // opening it, so only files large enough to skew the totals are checked.
-        if len >= HARD_LINK_CHECK_BYTES {
-            if let Some(id) = hard_link_identity(&file_path) {
-                if !ctx.seen_links.lock().unwrap().insert(id) {
-                    len = 0;
+        let len = entry_on_disk_len(path, &entry);
+        files.push((entry, len));
+    }
+    // A file reachable under two names (a hard link) is one file on disk: only the first name the
+    // scan meets counts it. Remembering ids costs memory, so outside the Windows folder only files
+    // big enough to skew the totals are remembered.
+    if vol.ntfs {
+        let mut seen = None;
+        for (entry, len) in files.iter_mut() {
+            if entry.file_id != 0 && (all_links || *len >= HARD_LINK_CHECK_BYTES) {
+                let seen = seen.get_or_insert_with(|| ctx.seen_links.lock().unwrap());
+                if !seen.insert(entry.file_id) {
+                    *len = 0;
                 }
             }
         }
+    }
+    let mut own_bytes = 0u64;
+    for (entry, len) in files {
         own_bytes += len;
         node.files += 1;
         if len >= LARGE_FILE_BYTES {
+            let file_path = path.join(&entry.name);
             ctx.large.lock().unwrap().push(LargeFile {
-                name: entry.file_name().to_string_lossy().into_owned(),
+                name: entry.name.to_string_lossy().into_owned(),
                 path: display(&file_path),
                 size: len,
-                modified: md.modified().map(unix_secs).unwrap_or(0),
+                modified: entry.modified,
             });
         }
     }
     ctx.files.fetch_add(node.files, Ordering::Relaxed);
     ctx.bytes.fetch_add(own_bytes, Ordering::Relaxed);
     node.own = own_bytes;
-    node.children = subdirs
-        .into_par_iter()
-        .map(|(p, n)| scan_dir(&p, n, ctx))
-        .collect();
+    let scan_all = |dirs: Vec<std::ffi::OsString>| -> Vec<Node> {
+        dirs.into_par_iter()
+            .map(|n| {
+                let p = path.join(&n);
+                let links = all_links || p.as_os_str().eq_ignore_ascii_case(&vol.system_root);
+                scan_dir(&p, n.to_string_lossy().into_owned(), ctx, vol, links)
+            })
+            .collect()
+    };
+    if vol.ntfs && path.as_os_str().eq_ignore_ascii_case(&vol.system_root) {
+        // A file in WinSxS and System32 counts under whichever name is met first. Walking WinSxS
+        // last makes that the same every time — otherwise gigabytes would hop between the two
+        // from one scan to the next, and the history page would report growth that never was.
+        // WinSxS keeps only what is its own, as DISM counts the component store.
+        let (sxs, rest): (Vec<_>, Vec<_>) = subdirs
+            .into_iter()
+            .partition(|n| n.eq_ignore_ascii_case("WinSxS"));
+        node.children = scan_all(rest);
+        node.children.extend(scan_all(sxs));
+    } else {
+        node.children = scan_all(subdirs);
+    }
     node.children.sort_unstable_by(|a, b| b.size.cmp(&a.size));
     node.size = own_bytes + node.children.iter().map(|c| c.size).sum::<u64>();
     node.files += node.children.iter().map(|c| c.files).sum::<u64>();
@@ -179,7 +209,14 @@ pub struct Summary {
 
 pub fn run(root: &Path, ctx: &ScanCtx) -> ScanData {
     let started = Instant::now();
-    let tree = scan_dir(root, display(root), ctx);
+    let vol = Volume {
+        ntfs: crate::util::is_ntfs(root),
+        system_root: system_root(),
+    };
+    let at_system_root = root.as_os_str().eq_ignore_ascii_case(&vol.system_root);
+    let tree = scan_dir(root, display(root), ctx, &vol, at_system_root);
+    // The ids were only needed while walking; on a system drive they are a few hundred thousand.
+    *ctx.seen_links.lock().unwrap() = Default::default();
     let mut large = std::mem::take(&mut *ctx.large.lock().unwrap());
     large.sort_unstable_by(|a, b| b.size.cmp(&a.size));
     large.truncate(LARGE_FILE_KEEP);
@@ -561,11 +598,43 @@ mod tests {
         std::fs::write(dir.path().join("a/b/two.bin"), vec![0u8; 500]).unwrap();
         std::fs::write(dir.path().join("top.bin"), vec![0u8; 10]).unwrap();
         let ctx = ScanCtx::default();
-        let tree = scan_dir(dir.path(), "root".into(), &ctx);
+        let vol = Volume {
+            ntfs: crate::util::is_ntfs(dir.path()),
+            system_root: system_root(),
+        };
+        let tree = scan_dir(dir.path(), "root".into(), &ctx, &vol, false);
         assert_eq!(tree.size, 1510);
         assert_eq!(tree.files, 3);
         assert_eq!(tree.own, 10);
         assert_eq!(tree.children[0].name, "a");
         assert_eq!(tree.children[0].size, 1500);
+    }
+
+    /// The WinSxS case: one small file under two names counts once.
+    #[test]
+    fn hard_links_count_once() {
+        let dir = tempfile::tempdir().unwrap();
+        if !crate::util::is_ntfs(dir.path()) {
+            return;
+        }
+        std::fs::create_dir_all(dir.path().join("winsxs")).unwrap();
+        std::fs::create_dir_all(dir.path().join("system32")).unwrap();
+        std::fs::write(dir.path().join("winsxs/k.dll"), vec![0u8; 4000]).unwrap();
+        std::fs::hard_link(
+            dir.path().join("winsxs/k.dll"),
+            dir.path().join("system32/k.dll"),
+        )
+        .unwrap();
+        let vol = Volume {
+            ntfs: true,
+            system_root: system_root(),
+        };
+        // Small files are only checked inside the Windows folder: here, every folder is treated so.
+        let tree = scan_dir(dir.path(), "root".into(), &ScanCtx::default(), &vol, true);
+        assert_eq!(tree.size, 4000);
+        assert_eq!(tree.files, 2);
+        // Elsewhere, a small hard link is not worth remembering and still counts twice.
+        let tree = scan_dir(dir.path(), "root".into(), &ScanCtx::default(), &vol, false);
+        assert_eq!(tree.size, 8000);
     }
 }

@@ -57,3 +57,15 @@ jobs:
           Compress-Archive -Path portable/* -DestinationPath $zip
           gh release upload "${{ inputs.tag }}" $zip --clobber
           "sha256: " + (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+
+      # Not for users: the .pdb that turns a crash dump (crashes\*.dmp in the data folder) into
+      # a stack with file and line. It only matches the diskmate.exe built in this run.
+      - name: Debug symbols
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $v = "${{ inputs.tag }}".TrimStart("v")
+          $sym = "DiskMate_${v}_x64_symbols.zip"
+          Compress-Archive -Path src-tauri/target/release/diskmate.pdb -DestinationPath $sym
+          gh release upload "${{ inputs.tag }}" $sym --clobber
