@@ -213,8 +213,9 @@ fn start_scan(app: AppHandle, state: State<AppState>, root: String) -> Result<()
         // Whatever happens in the walk, the progress loop stops and the UI hears the end: a
         // panic here used to leave the scan card counting nothing forever, with "stop" doing
         // nothing and no way to scan again short of restarting.
-        let result =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| scan::run(&root, &ctx)));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            util::scan_pool().install(|| scan::run(&root, &ctx))
+        }));
         done.store(true, Ordering::Relaxed);
         let state = app.state::<AppState>();
         let mut scanning = state.scanning.lock().unwrap_or_else(|e| e.into_inner());
@@ -312,6 +313,8 @@ struct AnalyzeProgress {
 async fn analyze_cleanup(app: AppHandle) -> Result<Vec<rules::CleanItem>, String> {
     let emitter = app.clone();
     let planned = tauri::async_runtime::spawn_blocking(move || {
+        // A running scan pauses meanwhile: the check is the quick one the user is waiting on.
+        let _aside = scan::step_aside();
         rules::analyze(|done, total, current| {
             let _ = emitter.emit(
                 "analyze-progress",

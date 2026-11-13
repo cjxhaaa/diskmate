@@ -18,8 +18,6 @@ export interface Scanning {
   root: string;
   progress: ScanProgress | null;
   startedAt: number;
-  /** Waiting for the cleanup analysis to finish: one disk-heavy job at a time. */
-  queued?: boolean;
 }
 
 /**
@@ -30,7 +28,7 @@ export type ShownSummary = ScanSummary & { fromHistory?: boolean };
 
 export type AnalysisState =
   | { status: "idle" }
-  | { status: "loading"; progress: AnalyzeProgress | null; /** Waiting for the scan to finish. */ queued?: boolean }
+  | { status: "loading"; progress: AnalyzeProgress | null }
   | { status: "done"; items: CleanItem[]; at: number }
   | { status: "error"; message: string };
 
@@ -120,63 +118,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return list;
   }, []);
 
-  // A scan and the cleanup analysis both read the disk hard. Run together they slowed each other
-  // down (a scan took 152 s instead of 58 s) and weighed on whatever else was running, so they
-  // take turns: whichever is asked for second waits for the first. The refs let the callbacks
-  // see the latest state without being re-created on every progress tick.
-  const scanningRef = useRef<Scanning | null>(null);
-  scanningRef.current = scanning;
-  const analysisRef = useRef<AnalysisState>(analysis);
-  analysisRef.current = analysis;
-
-  const beginScan = useCallback(
-    (r: string) => {
+  // A scan and the cleanup check never read the disk at the same time: while a check runs, the
+  // backend pauses the scan (progress says so) and resumes it after.
+  const startScan = useCallback(
+    (target?: string) => {
+      const r = target ?? root;
       setScanning({ root: r, progress: null, startedAt: Date.now() });
       api.startScan(r).catch((e) => {
         toast(`扫描失败：${e}`);
         setScanning(null);
       });
     },
-    [toast],
-  );
-
-  const startScan = useCallback(
-    (target?: string) => {
-      const r = target ?? root;
-      const a = analysisRef.current;
-      if (a.status === "loading" && !a.queued) setScanning({ root: r, progress: null, startedAt: Date.now(), queued: true });
-      else beginScan(r);
-    },
-    [root, beginScan],
+    [root, toast],
   );
 
   const cancelScan = useCallback(() => {
-    if (scanningRef.current?.queued) setScanning(null);
-    else void api.cancelScan();
+    void api.cancelScan();
   }, []);
 
-  const runAnalysis = useCallback(() => {
+  const analyze = useCallback(() => {
+    analysisStarted.current = true;
     setAnalysis({ status: "loading", progress: null });
     api
       .analyzeCleanup()
       .then((items) => setAnalysis({ status: "done", items, at: Date.now() }))
       .catch((e) => setAnalysis({ status: "error", message: String(e) }));
   }, []);
-
-  const analyze = useCallback(() => {
-    analysisStarted.current = true;
-    const s = scanningRef.current;
-    if (s && !s.queued) setAnalysis({ status: "loading", progress: null, queued: true });
-    else runAnalysis();
-  }, [runAnalysis]);
-
-  // Hand over: the waiting job starts once the other one is over.
-  useEffect(() => {
-    if (scanning?.queued && analysis.status !== "loading") beginScan(scanning.root);
-  }, [scanning, analysis.status, beginScan]);
-  useEffect(() => {
-    if (analysis.status === "loading" && analysis.queued && !scanning) runAnalysis();
-  }, [analysis, scanning, runAnalysis]);
 
   const cleanup = useCallback(
     async (ids: string[]) => {

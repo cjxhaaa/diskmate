@@ -17,6 +17,8 @@ export interface ScanProgress {
   dirs: number;
   bytes: number;
   current: string;
+  /** Paused while the cleanup check runs; resumes by itself. */
+  paused?: boolean;
 }
 
 export interface CategoryStat {

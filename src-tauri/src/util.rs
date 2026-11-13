@@ -457,6 +457,24 @@ pub fn processes() -> Vec<(u32, String)> {
         .collect()
 }
 
+/// The pool whole-disk scans run on, in background mode like the main one. A scan of its own
+/// because it pauses for the cleanup check (scan::step_aside): its threads sleeping must not be
+/// the threads the check needs.
+pub fn scan_pool() -> &'static rayon::ThreadPool {
+    static POOL: std::sync::OnceLock<rayon::ThreadPool> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        let logical = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4);
+        rayon::ThreadPoolBuilder::new()
+            .num_threads((logical / 4).clamp(2, 6))
+            .thread_name(|i| format!("diskmate-scan-{i}"))
+            .start_handler(|_| background_thread())
+            .build()
+            .expect("thread pool")
+    })
+}
+
 /// A second, smaller pool for work nobody is waiting on (measuring every installed app after the
 /// list is shown), so it never holds up what the user just asked for in the main pool.
 pub fn passive_pool() -> &'static rayon::ThreadPool {
