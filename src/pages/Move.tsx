@@ -393,6 +393,7 @@ function MovePanel({ view, onMovedCount }: { view: "move" | "moved"; onMovedCoun
           <div className="move-list-head">
             <span className="muted">
               {list === null ? "正在读取…" : measuring ? "正在测量各个文件夹的大小，大约需要十几秒…" : `找到 ${pending.length} 个可以搬的文件夹`}
+              <span className="faint">　·　只想挪走几个文件？在「文件整理」里勾选后点「移到其他盘」</span>
             </span>
             <button className="btn btn-ghost" onClick={load} disabled={measuring}>
               {measuring ? <span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> : <RefreshCw size={14} />}

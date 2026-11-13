@@ -515,7 +515,7 @@ export function Files() {
       <div className="page-head">
         <div>
           <h1 className="page-title">文件整理</h1>
-          <div className="page-sub">找出可以删的安装包、压缩包、重复文件和大文件</div>
+          <div className="page-sub">找出可以删或挪走的安装包、压缩包、重复文件和大文件</div>
         </div>
         <div className="tabs">
           {TABS.map((t) => (

@@ -53,6 +53,9 @@ export function MoveDialog({ items, onCancel, onDone }: Props) {
         <div className="muted" style={{ fontSize: 13.5 }}>
           移到另一块盘上的同一路径，原位置不再保留。复制完核对无误后才会删除原文件。
         </div>
+        <div className="faint" style={{ fontSize: 12.5, marginTop: 6 }}>
+          想把整个文件夹搬走、以后的新文件也直接存过去（比如整个「下载」文件夹），请用「搬家与压缩」。
+        </div>
         {targets.length === 0 ? (
           <div className="warn-box" style={{ marginTop: 14 }}>
             <div>没有找到其他本地磁盘。</div>
