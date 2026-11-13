@@ -325,7 +325,7 @@ export function Overview({ onGoClean }: { onGoClean: () => void }) {
           <div>
             还没有扫描 {driveName}，扫描后可以看到空间都用在哪里
             <div className="faint" style={{ fontSize: 13, marginTop: 4 }}>
-              {scanningElsewhere ? `正在扫描 ${scanning?.root}，完成后才能开始下一个` : "整盘扫描通常需要一到三分钟"}
+              {scanningElsewhere ? `正在扫描 ${scanning?.root}，完成后才能开始下一个` : "整盘扫描通常需要一到三分钟，机械硬盘会久一些"}
             </div>
           </div>
           <button className="btn btn-primary btn-lg" disabled={scanningElsewhere} onClick={() => startScan()}>

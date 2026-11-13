@@ -42,9 +42,6 @@ interface Toast {
   text: string;
 }
 
-/** A scan this recent is shown at launch instead of scanning again. */
-const REUSE_SCAN_SECS = 24 * 3600;
-
 interface Store {
   drives: DriveInfo[];
   /** The drive on screen. Choosing one never starts a scan by itself. */
@@ -240,8 +237,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return () => offs.forEach((p) => p.then((off) => off()));
   }, [analyze, refreshDrives]);
 
-  // First launch: show the system drive's last scan if it is recent, otherwise scan it once.
-  // Every later scan is the user's call — a whole-disk read is not something to do behind their back.
+  // Launch: show the system drive's last scan, however old (the overview says when it was taken).
+  // A scan is always the user's call — reading the whole disk, minutes on a hard disk, is not
+  // something to start behind their back. With no scan yet, the overview offers one.
   useEffect(() => {
     if (startedOnce.current) return;
     startedOnce.current = true;
@@ -253,12 +251,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (done.some((s) => key(s.root) === key(sys.root))) return;
       const past = await api.scanHistory(sys.root).catch(() => [] as ScanSummary[]);
       const last = past[past.length - 1];
-      if (last && Date.now() / 1000 - last.scannedAt < REUSE_SCAN_SECS) {
-        setScans((all) => ({ ...all, [key(last.root)]: { ...last, fromHistory: true } }));
-        analyze();
-      } else {
-        startScan(sys.root);
-      }
+      if (last) setScans((all) => ({ ...all, [key(last.root)]: { ...last, fromHistory: true } }));
+      // What can be cleaned is measured from a few known folders, not the whole disk: cheap enough
+      // to have ready when the user opens the page.
+      analyze();
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
