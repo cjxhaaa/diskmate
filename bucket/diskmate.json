@@ -1,13 +1,13 @@
 {
-    "version": "0.1.1",
+    "version": "0.1.2",
     "description": "Windows disk analyzer and cleaner: see where your C: drive went and free it up safely",
     "homepage": "https://github.com/cjxhaaa/diskmate",
     "license": "MIT",
     "notes": "Settings, caches and scan history live in %LOCALAPPDATA%\\com.cjxhaaa.diskmate.",
     "architecture": {
         "64bit": {
-            "url": "https://github.com/cjxhaaa/diskmate/releases/download/v0.1.1/DiskMate_0.1.1_x64_portable.zip",
-            "hash": "0caef2b0df6633c0ad6fa88ddf3529dd97db6827d6d301852dbad553b2c4a4fd"
+            "url": "https://github.com/cjxhaaa/diskmate/releases/download/v0.1.2/DiskMate_0.1.2_x64_portable.zip",
+            "hash": "4e2ed04c244fe4f86d6d8b0e7b0ebf6d05c52d337c3a0cefc0d10540a2fe344a"
         }
     },
     "bin": "DiskMate.exe",
