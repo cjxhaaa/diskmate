@@ -1,6 +1,7 @@
 mod apps;
 mod cache;
 mod clean;
+mod crash;
 mod downloads;
 mod dupes;
 mod filemeta;
@@ -984,6 +985,43 @@ fn webview_memory_low(window: &tauri::WebviewWindow, low: bool) {
     });
 }
 
+/// The crash dump left by a crash the user has not been told about yet (see crash::unseen).
+#[tauri::command]
+fn crash_report() -> Option<String> {
+    crash::unseen().map(|p| util::display(&p))
+}
+
+#[tauri::command]
+fn crash_report_seen() {
+    crash::mark_seen();
+}
+
+/// Opens the bug report form in the default browser. The address is fixed here, not taken from
+/// the page. ShellExecute, not `explorer.exe <url>`: handed a URL with a query, Explorer opened a
+/// folder window and no browser.
+#[tauri::command]
+fn open_feedback() -> Result<(), String> {
+    use windows::core::w;
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    let result = unsafe {
+        ShellExecuteW(
+            None,
+            w!("open"),
+            w!("https://github.com/cjxhaaa/diskmate/issues/new?template=bug_report.yml"),
+            None,
+            None,
+            SW_SHOWNORMAL,
+        )
+    };
+    // Above 32 is success; anything else is an error code.
+    if result.0 as isize > 32 {
+        Ok(())
+    } else {
+        Err(format!("没能打开浏览器（{}）", result.0 as isize))
+    }
+}
+
 /// Runs a helper job when the command line asks for one, returning its exit code; `None` means
 /// start the app as usual.
 pub fn run_helper() -> Option<i32> {
@@ -994,13 +1032,14 @@ pub fn run_helper() -> Option<i32> {
     None
 }
 
-/// Appends every panic to `crash.log` in the data folder, so a report of DiskMate closing on its
-/// own can come with where it happened.
+/// Appends every panic to `crash.log` in the data folder, with a dump of where every thread was
+/// (crash::write_dump), so a report of DiskMate closing on its own can come with where it happened.
 fn log_panics(dir: PathBuf) {
     let default = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         use std::io::Write;
         let _ = std::fs::create_dir_all(&dir);
+        let dump = crash::write_dump(None);
         if let Ok(mut f) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -1008,10 +1047,12 @@ fn log_panics(dir: PathBuf) {
         {
             let _ = writeln!(
                 f,
-                "[{}] v{} thread '{}': {info}",
+                "[{}] v{} thread '{}': {info}{}",
                 util::unix_secs(std::time::SystemTime::now()),
                 env!("CARGO_PKG_VERSION"),
                 std::thread::current().name().unwrap_or("?"),
+                dump.map(|d| format!(" (dump: {})", util::display(&d)))
+                    .unwrap_or_default(),
             );
         }
         default(info);
@@ -1029,7 +1070,20 @@ pub fn run() {
         }))
         .setup(|app| {
             let dir = data_dir(app.handle());
+            crash::init(&dir);
             log_panics(dir.clone());
+            // Debug builds only: `DISKMATE_CRASH_AFTER_SECS=5` crashes the app on purpose, to see
+            // the dump being written and the notice on the next launch.
+            #[cfg(debug_assertions)]
+            if let Some(secs) = std::env::var("DISKMATE_CRASH_AFTER_SECS")
+                .ok()
+                .and_then(|s| s.parse::<u64>().ok())
+            {
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_secs(secs));
+                    unsafe { std::ptr::write_volatile(8 as *mut u8, 1) };
+                });
+            }
             cache::init(dir.clone());
             tray::setup(app.handle(), &dir, |app| {
                 let app = app.clone();
@@ -1080,6 +1134,9 @@ pub fn run() {
             run_cleanup,
             delete_files,
             move_files,
+            crash_report,
+            crash_report_seen,
+            open_feedback,
             scan_history,
             scan_diff,
             analyze_downloads,

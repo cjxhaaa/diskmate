@@ -33,6 +33,13 @@ body:
       placeholder: Windows 11 24H2
     validations:
       required: true
+  - type: textarea
+    id: crash
+    attributes:
+      label: 如果是闪退（可选）
+      description: |
+        新版本闪退时会在 `%LOCALAPPDATA%\com.cjxhaaa.diskmate\crashes` 里留下 `.dmp` 文件（崩溃转储）。把最新的一个压缩成 .zip 拖进这里，就能看出崩在哪一行。.dmp 里可能带有你电脑上的文件路径等信息，介意的话先在这里说一声，再私下发送。
+        也可以按 Win+R 输入 `eventvwr`，在「Windows 日志 → 应用程序」里找闪退时间点、来源为「Application Error」的错误，把「错误模块名称」和「异常代码」贴在这里。
   - type: checkboxes
     id: privacy
     attributes:

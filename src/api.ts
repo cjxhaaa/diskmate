@@ -362,6 +362,10 @@ export const api = {
   onDupesProgress: (h: (p: DupeProgress) => void) => on("dupes-progress", h),
   onDupesDone: (h: (g: DupeGroup[]) => void) => on("dupes-done", h),
   revealPath: (path: string) => call<void>("reveal_path", { path }),
+  /** The crash dump from a crash not yet shown to the user, or null. */
+  crashReport: () => call<string | null>("crash_report"),
+  crashReportSeen: () => call<void>("crash_report_seen"),
+  openFeedback: () => call<void>("open_feedback"),
   listStartup: () => call<StartupItem[]>("list_startup"),
   setStartupEnabled: (id: string, enabled: boolean) => call<void>("set_startup_enabled", { id, enabled }),
   perfSample: () => call<PerfSample>("perf_sample"),

@@ -104,6 +104,17 @@ cargo test --release real_toggle -- --ignored --nocapture    # 建一个临时 R
 cargo test --release real_pick -- --ignored --nocapture      # 不动鼠标，模拟点选任务栏并取消一次
 ```
 
+## 排查闪退
+
+- DiskMate 自己的进程崩溃（访问违规、栈溢出）时，未处理异常过滤器把异常交给启动时就建好的一个线程，由它用
+  `MiniDumpWriteDump` 写一个小型转储到数据目录的 `crashes\`（栈和栈上引用的内存，通常一两百 KB，最多留 5 个）。
+  另起线程写，是因为栈溢出的线程自己已经没有栈空间了。写完后交还给系统，Windows 错误报告和事件日志照常记录。
+- Rust 内部报错（panic）会记到 `crash.log`，同时也写一份转储。
+- 移到回收站在单独的小进程（`diskmate.exe --recycle`）里做：外壳扩展（安全软件常挂钩删除）出错只会让小进程退出。
+- 正式版带行号信息编译，`diskmate.pdb` 不进安装包，而是作为 `DiskMate_<版本>_x64_symbols.zip` 附在每个 GitHub Release 上。
+  读转储：用 WinDbg 打开 .dmp，`.sympath+ <解压出的 pdb 所在目录>`，再 `.ecxr` 和 `k` 就能看到崩溃的调用栈和行号。
+  pdb 只和同一次构建出的 exe 匹配。
+
 ## 已知限制
 
 - 扫描用普通权限，`System Volume Information` 等目录读不到，计入「系统保留区」。
