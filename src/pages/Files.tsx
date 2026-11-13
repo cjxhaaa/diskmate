@@ -112,8 +112,8 @@ function DownloadsPanel() {
   const moved = (out: MoveOutcome, drive: string) => {
     setMoving(false);
     toast(`已移到 ${drive.replace("\\", "")}：${formatBytes(out.freed)}${failNote(out)}`);
-    // Re-read the folder rather than guess which items went: a failed one is still there.
-    void loadDownloads();
+    // Only what really left: a failed item stays listed, and nothing gets ticked again.
+    dropDownloads(out.moved);
     setSelected(new Set());
     void refreshDrives();
   };

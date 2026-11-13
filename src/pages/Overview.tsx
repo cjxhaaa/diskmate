@@ -195,7 +195,8 @@ function Scanning() {
   const frac = scanFraction(p, prev && !prev.cancelled ? prev.files : undefined, drive ? drive.total - drive.free : 0);
   const elapsed = Date.now() - scanning.startedAt;
   // Too early, the pace is mostly the first big files: wait before guessing.
-  const left = frac && elapsed > 15_000 && frac > 0.03 ? (elapsed * (1 - frac)) / frac : null;
+  // At the 99% cap the yardstick has run out (more files than last time): no honest guess left.
+  const left = frac && elapsed > 15_000 && frac > 0.03 && frac < 0.99 ? (elapsed * (1 - frac)) / frac : null;
   return (
     <div className="card card-pad scan-state">
       <div className="pulse-ring">
