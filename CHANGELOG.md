@@ -2,7 +2,7 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [未发布]
+## [0.1.3] - 2026-11-16
 
 ### 新增
 
@@ -61,6 +61,7 @@
 - 跟随系统深色模式。
 - 提供安装版、便携版（zip）和 Scoop 安装三种方式。
 
+[0.1.3]: https://github.com/cjxhaaa/diskmate/releases/tag/v0.1.3
 [0.1.2]: https://github.com/cjxhaaa/diskmate/releases/tag/v0.1.2
 [0.1.1]: https://github.com/cjxhaaa/diskmate/releases/tag/v0.1.1
 [0.1.0]: https://github.com/cjxhaaa/diskmate/releases/tag/v0.1.0
