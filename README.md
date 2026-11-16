@@ -66,16 +66,16 @@ DiskMate 的想法很简单：
     <td><img src="docs/screenshots/apps-light.webp" alt="应用管理"><p align="center">应用管理：程序 + 数据大小、上次使用时间</p></td>
   </tr>
   <tr>
+    <td><img src="docs/screenshots/files-light.webp" alt="文件整理"><p align="center">文件整理：装过的安装包、解压过的压缩包，删掉或移到其他盘</p></td>
     <td><img src="docs/screenshots/move-light.webp" alt="搬家"><p align="center">搬家：勾选后实时显示两边的可用空间</p></td>
+  </tr>
+  <tr>
     <td><img src="docs/screenshots/explorer-light.webp" alt="空间分析"><p align="center">空间分析：矩形树图逐层点进去</p></td>
-  </tr>
-  <tr>
     <td><img src="docs/screenshots/startup-light.webp" alt="开机启动"><p align="center">开机启动：给出建议和理由</p></td>
-    <td><img src="docs/screenshots/finder-light.webp" alt="窗口定位"><p align="center">窗口定位：点一下窗口找到程序文件</p></td>
   </tr>
   <tr>
+    <td><img src="docs/screenshots/finder-light.webp" alt="窗口定位"><p align="center">窗口定位：点一下窗口找到程序文件</p></td>
     <td><img src="docs/screenshots/perf-dark.webp" alt="性能（深色）"><p align="center">性能：实时曲线，跟随系统深色模式</p></td>
-    <td><img src="docs/screenshots/overview-dark.webp" alt="概览（深色）"><p align="center">深色模式</p></td>
   </tr>
 </table>
 
@@ -85,8 +85,8 @@ DiskMate 的想法很简单：
 
 | 方式 | 怎么装 | 适合 |
 |---|---|---|
-| **安装版** | 在 [Releases](https://github.com/cjxhaaa/diskmate/releases/latest) 下载 `DiskMate_x.y.z_x64-setup.exe`，双击安装 | 大多数人。装在当前用户下，**不需要管理员权限**；缺少 WebView2 时会自动补上 |
-| **便携版** | 下载 `DiskMate_x.y.z_x64_portable.zip`，解压后双击 `DiskMate.exe` | 不想安装、放在 U 盘里用。需要系统已有 WebView2（Windows 11 自带） |
+| **安装版** | 在 [Releases](https://github.com/cjxhaaa/diskmate/releases/latest) 下载 `DiskMate_x.y.z_x64-setup.exe`，双击安装 | 大多数人。装在当前用户下，**不需要管理员权限**；缺少 WebView2 时会自动补上；有新版本时在左下角提示，点一下就能升级 |
+| **便携版** | 下载 `DiskMate_x.y.z_x64_portable.zip`，解压后双击 `DiskMate.exe` | 不想安装、放在 U 盘里用。需要系统已有 WebView2（Windows 11 自带）；有新版本时会提示，需要手动下载 |
 | **Scoop** | `scoop bucket add diskmate https://github.com/cjxhaaa/diskmate`<br>`scoop install diskmate` | 用 [Scoop](https://scoop.sh/) 管理软件的人，之后 `scoop update diskmate` 升级 |
 
 > [!NOTE]
@@ -141,6 +141,13 @@ DiskMate 的想法很简单：
 </details>
 
 <details>
+<summary><b>会联网吗？怎么更新？</b></summary>
+
+只在检查更新时从 GitHub 下载一个记录最新版本号的小文件，每天最多一次，不上报任何信息；托盘菜单里可以关掉「自动检查更新」，也可以随时点「检查更新…」。发现新版本时只在左下角提示一下，不会弹窗打断你；点开后，安装版点「立即更新」，会自动下载、校验签名并安装；便携版和 Scoop 安装的会告诉你怎么升级。
+
+</details>
+
+<details>
 <summary><b>遇到闪退怎么办？</b></summary>
 
 DiskMate 闪退时会在数据目录的 `crashes` 文件夹里留下崩溃转储，下次打开时会提示，可以复制文件路径或直接去反馈。[提 Issue](https://github.com/cjxhaaa/diskmate/issues/new?template=bug_report.yml) 时把转储压缩成 .zip 附上，就能看出崩在哪一行。转储里可能有你电脑上的文件路径，介意的话可以先说一声再私下发我。
@@ -173,7 +180,6 @@ npm run tauri build    # 生成安装包：src-tauri/target/release/bundle/nsis/
 ## 路线图
 
 - [ ] 英文界面
-- [ ] 应用内检查更新
 - [ ] 代码签名
 - [ ] 定期提醒：C 盘可用空间低于阈值时提示
 - [ ] 上架 winget 和 Scoop 官方仓库（现在可以用本仓库自带的 Scoop bucket 安装）

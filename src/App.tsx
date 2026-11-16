@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
-import { Activity, AppWindow, Check, Copy, Crosshair, FolderSearch, HardDrive, LayoutDashboard, LayoutGrid, Power, Sparkles, TrendingUp, Truck } from "lucide-react";
-import { api } from "./api";
+import { useEffect, useRef, useState } from "react";
+import { Activity, AppWindow, Check, CircleArrowUp, Copy, Crosshair, FolderSearch, HardDrive, LayoutDashboard, LayoutGrid, Power, Sparkles, TrendingUp, Truck } from "lucide-react";
+import { api, type UpdateInfo } from "./api";
+import { UpdateDialog } from "./components/UpdateDialog";
 import { Dialog, Toasts, UsageBar } from "./components/ui";
 import { formatBytes } from "./format";
 import { Apps } from "./pages/Apps";
@@ -135,16 +136,45 @@ function CrashNotice() {
 function Shell() {
   const [page, setPage] = useState<Page>("overview");
   const [askClose, setAskClose] = useState(false);
+  // A newer release: shown as a quiet note in the sidebar, opened only when the user asks.
+  const [available, setAvailable] = useState<UpdateInfo | null>(null);
+  const [showUpdate, setShowUpdate] = useState(false);
+  const { drives, root, analysis, scanning, toast } = useStore();
+  const checking = useRef(false);
+
+  // 「检查更新…」 from the tray: the answer shows here, "up to date" included.
+  const checkUpdate = async () => {
+    if (checking.current) return;
+    checking.current = true;
+    try {
+      const found = await api.checkUpdate();
+      // Asked for from the tray: the answer opens right away.
+      if (found) {
+        setAvailable(found);
+        setShowUpdate(true);
+      }
+      else toast("已经是最新版本");
+    } catch (e) {
+      toast(String(e));
+    } finally {
+      checking.current = false;
+    }
+  };
 
   // The tray menu opens pages: through an event when the window is open, or as the page a
   // freshly built window should start on.
   useEffect(() => {
-    const go = (p: string | null) => p && PAGES.has(p) && setPage(p as Page);
+    const go = (p: string | null) => {
+      if (p === "check-update") void checkUpdate();
+      else if (p && PAGES.has(p)) setPage(p as Page);
+    };
     void api.takePendingPage().then(go);
-    const offs = [api.onNavigate(go), api.onCloseAsked(() => setAskClose(true))];
+    // The daily check: what it found before this window opened, and what it finds from now on.
+    void api.pendingUpdate().then((u) => u && setAvailable(u));
+    const offs = [api.onNavigate(go), api.onCloseAsked(() => setAskClose(true)), api.onUpdateAvailable(setAvailable)];
     return () => offs.forEach((p) => p.then((off) => off()));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const { drives, root, analysis, scanning } = useStore();
   const drive = drives.find((d) => d.root === root);
   const safeBytes =
     analysis.status === "done" ? analysis.items.filter((i) => !i.guideOnly && i.risk === "safe").reduce((s, i) => s + i.size, 0) : 0;
@@ -169,6 +199,13 @@ function Shell() {
             {id === "overview" && scanning && <span className="spinner" style={{ marginLeft: "auto", width: 14, height: 14, borderWidth: 2 }} />}
           </button>
         ))}
+        {available && (
+          <button className="update-pill" title="点击查看更新内容" onClick={() => setShowUpdate(true)}>
+            <CircleArrowUp size={16} />
+            <span>新版本 {available.version}</span>
+            <span className="update-pill-go">查看</span>
+          </button>
+        )}
         {drive && (
           <div className="sidebar-foot">
             <div style={{ display: "flex", justifyContent: "space-between" }}>
@@ -199,6 +236,16 @@ function Shell() {
       <Toasts />
       {askClose && <CloseChoice onDone={() => setAskClose(false)} />}
       <CrashNotice />
+      {available && showUpdate && (
+        <UpdateDialog
+          info={available}
+          onClose={() => setShowUpdate(false)}
+          onSkip={() => {
+            setShowUpdate(false);
+            setAvailable(null);
+          }}
+        />
+      )}
     </div>
   );
 }

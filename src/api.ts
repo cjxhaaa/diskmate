@@ -79,6 +79,24 @@ export interface CleanItem {
   details: Detail[];
 }
 
+/** How this copy was installed: the setup program updates itself; the others are told how. */
+export type InstallKind = "installer" | "portable" | "scoop";
+
+export interface UpdateInfo {
+  version: string;
+  current: string;
+  /** Release notes, Markdown as on the release page. */
+  notes: string;
+  kind: InstallKind;
+}
+
+export interface UpdateProgress {
+  downloaded: number;
+  total: number | null;
+  /** Downloaded and verified; the installer is starting and DiskMate is about to close. */
+  installing: boolean;
+}
+
 export interface Outcome {
   freed: number;
   removedFiles: number;
@@ -364,6 +382,13 @@ export const api = {
   revealPath: (path: string) => call<void>("reveal_path", { path }),
   /** The crash dump from a crash not yet shown to the user, or null. */
   crashReport: () => call<string | null>("crash_report"),
+  /** Asks for a newer release now; null when this is the newest. */
+  checkUpdate: () => call<UpdateInfo | null>("check_update"),
+  /** What the daily check found before this window was there to show it. */
+  pendingUpdate: () => call<UpdateInfo | null>("pending_update"),
+  installUpdate: () => call<void>("install_update"),
+  skipUpdate: (version: string) => call<void>("skip_update", { version }),
+  openReleases: () => call<void>("open_releases"),
   crashReportSeen: () => call<void>("crash_report_seen"),
   openFeedback: () => call<void>("open_feedback"),
   listStartup: () => call<StartupItem[]>("list_startup"),
@@ -382,6 +407,8 @@ export const api = {
   setCloseToTray: (on: boolean) => call<void>("set_close_to_tray", { on }),
   closeMainWindow: () => call<void>("close_main_window"),
   onNavigate: (h: (page: string) => void) => on("navigate", h),
+  onUpdateAvailable: (h: (u: UpdateInfo) => void) => on("update-available", h),
+  onUpdateProgress: (h: (p: UpdateProgress) => void) => on("update-progress", h),
   onCloseAsked: (h: () => void) => on("close-asked", h),
   listApps: () => call<AppInfo[]>("list_apps"),
   uninstallApp: (id: string) => call<void>("uninstall_app", { id }),
