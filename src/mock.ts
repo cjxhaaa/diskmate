@@ -276,6 +276,28 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
       }
       return out as T;
     }
+    case "check_update":
+      await sleep(600);
+      return {
+        version: "0.1.3",
+        current: "0.1.2",
+        notes: ["### 新增", "", "- **检查更新**：安装版可以在应用里直接升级。", "", "### 修复", "", "- 一些小问题。"].join("\n"),
+        kind: "installer",
+      } as T;
+    case "pending_update":
+      return null as T;
+    case "install_update": {
+      const total = 2.7 * 1024 * 1024;
+      for (let d = 0; d <= total; d += total / 20) {
+        await sleep(120);
+        emit("update-progress", { downloaded: Math.min(d, total), total, installing: false });
+      }
+      emit("update-progress", { downloaded: 0, total: null, installing: true });
+      return new Promise<T>(() => {});
+    }
+    case "skip_update":
+    case "open_releases":
+      return undefined as T;
     case "crash_report":
       return null as T;
     case "crash_report_seen":

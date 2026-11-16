@@ -27,11 +27,19 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDA0RUZGQjk2QTRDREUxRTQKUldUazRjMmtsdnZ2QklpNG55cEdiNGMrR3ovRW85Vi8wSnh3a2JsYTRaV0JvdDVDd0FLYStnNFgK",
+      "endpoints": ["https://github.com/cjxhaaa/diskmate/releases/latest/download/latest.json"],
+      "windows": { "installMode": "passive" }
+    }
   }
 }

@@ -141,6 +141,13 @@ DiskMate 的想法很简单：
 </details>
 
 <details>
+<summary><b>会联网吗？怎么更新？</b></summary>
+
+只在检查更新时从 GitHub 下载一个记录最新版本号的小文件，每天最多一次，不上报任何信息；托盘菜单里可以关掉「自动检查更新」，也可以随时点「检查更新…」。发现新版本时只在左下角提示一下，不会弹窗打断你；点开后，安装版点「立即更新」，会自动下载、校验签名并安装；便携版和 Scoop 安装的会告诉你怎么升级。
+
+</details>
+
+<details>
 <summary><b>遇到闪退怎么办？</b></summary>
 
 DiskMate 闪退时会在数据目录的 `crashes` 文件夹里留下崩溃转储，下次打开时会提示，可以复制文件路径或直接去反馈。[提 Issue](https://github.com/cjxhaaa/diskmate/issues/new?template=bug_report.yml) 时把转储压缩成 .zip 附上，就能看出崩在哪一行。转储里可能有你电脑上的文件路径，介意的话可以先说一声再私下发我。
@@ -173,7 +180,6 @@ npm run tauri build    # 生成安装包：src-tauri/target/release/bundle/nsis/
 ## 路线图
 
 - [ ] 英文界面
-- [ ] 应用内检查更新
 - [ ] 代码签名
 - [ ] 定期提醒：C 盘可用空间低于阈值时提示
 - [ ] 上架 winget 和 Scoop 官方仓库（现在可以用本仓库自带的 Scoop bucket 安装）

@@ -21,6 +21,10 @@ pub struct Settings {
     /// What the close button does: true keeps DiskMate in the tray, false quits. None until the
     /// user has been asked once.
     pub close_to_tray: Option<bool>,
+    /// Check for a new version once a day. None (never set) means yes.
+    pub auto_update: Option<bool>,
+    /// A version the user chose to skip: the daily check stays quiet about it.
+    pub skip_version: Option<String>,
 }
 
 fn settings_file(dir: &Path) -> PathBuf {
@@ -50,6 +54,7 @@ pub struct TrayState<R: Runtime> {
     pub pending_page: Mutex<Option<String>>,
     space: MenuItem<R>,
     keep_in_tray: CheckMenuItem<R>,
+    auto_update: CheckMenuItem<R>,
 }
 
 impl<R: Runtime> TrayState<R> {
@@ -57,6 +62,19 @@ impl<R: Runtime> TrayState<R> {
         let mut s = self.settings.lock().unwrap();
         s.close_to_tray = Some(on);
         let _ = self.keep_in_tray.set_checked(on);
+        save_settings(dir, &s)
+    }
+
+    pub fn set_auto_update(&self, dir: &Path, on: bool) -> Result<(), String> {
+        let mut s = self.settings.lock().unwrap();
+        s.auto_update = Some(on);
+        let _ = self.auto_update.set_checked(on);
+        save_settings(dir, &s)
+    }
+
+    pub fn set_skip_version(&self, dir: &Path, version: Option<String>) -> Result<(), String> {
+        let mut s = self.settings.lock().unwrap();
+        s.skip_version = version;
         save_settings(dir, &s)
     }
 }
@@ -128,6 +146,15 @@ pub fn setup<R: Runtime>(
         settings.close_to_tray != Some(false),
         None::<&str>,
     )?;
+    let check_update = MenuItem::with_id(app, "check-update", "检查更新…", true, None::<&str>)?;
+    let auto_update = CheckMenuItem::with_id(
+        app,
+        "auto-update",
+        "自动检查更新",
+        true,
+        settings.auto_update != Some(false),
+        None::<&str>,
+    )?;
     let quit = MenuItem::with_id(app, "quit", "退出 DiskMate", true, None::<&str>)?;
     let menu = Menu::with_items(
         app,
@@ -140,6 +167,9 @@ pub fn setup<R: Runtime>(
             &finder,
             &PredefinedMenuItem::separator(app)?,
             &keep_in_tray,
+            &auto_update,
+            &check_update,
+            &PredefinedMenuItem::separator(app)?,
             &quit,
         ],
     )?;
@@ -148,6 +178,7 @@ pub fn setup<R: Runtime>(
         pending_page: Mutex::new(None),
         space,
         keep_in_tray,
+        auto_update,
     });
 
     let dir = data_dir.to_path_buf();
@@ -166,6 +197,13 @@ pub fn setup<R: Runtime>(
                 let on = state.keep_in_tray.is_checked().unwrap_or(true);
                 let _ = state.set_close_to_tray(&dir, on);
             }
+            "auto-update" => {
+                let state = app.state::<TrayState<R>>();
+                let on = state.auto_update.is_checked().unwrap_or(true);
+                let _ = state.set_auto_update(&dir, on);
+            }
+            // The window runs the check, so its answer (or "up to date") shows where the user looks.
+            "check-update" => show_main(app, Some("check-update")),
             "quit" => app.exit(0),
             _ => {}
         })

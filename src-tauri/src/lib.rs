@@ -14,6 +14,7 @@ mod scan;
 mod startup;
 mod sys;
 mod tray;
+mod update;
 mod util;
 mod vdisk;
 
@@ -985,6 +986,41 @@ fn webview_memory_low(window: &tauri::WebviewWindow, low: bool) {
     });
 }
 
+/// Asks GitHub for a newer release now (the tray's 「检查更新…」). `None`: up to date.
+#[tauri::command]
+async fn check_update(app: AppHandle) -> Result<Option<update::UpdateInfo>, String> {
+    update::check(&app).await
+}
+
+/// The newer release the daily check found, for the sidebar's note.
+#[tauri::command]
+fn pending_update(app: AppHandle) -> Option<update::UpdateInfo> {
+    update::available(&app)
+}
+
+/// Downloads, verifies and installs the release `check_update` found; DiskMate closes and the
+/// installer opens the new version. Progress arrives as `update-progress`.
+#[tauri::command]
+async fn install_update(app: AppHandle) -> Result<(), String> {
+    update::install(&app).await
+}
+
+/// The daily check stops mentioning `version`.
+#[tauri::command]
+fn skip_update(
+    app: AppHandle,
+    tray_state: State<tray::TrayState<tauri::Wry>>,
+    version: String,
+) -> Result<(), String> {
+    update::forget(&app);
+    tray_state.set_skip_version(&data_dir(&app), Some(version))
+}
+
+#[tauri::command]
+fn open_releases() -> Result<(), String> {
+    update::open_releases()
+}
+
 /// The crash dump left by a crash the user has not been told about yet (see crash::unseen).
 #[tauri::command]
 fn crash_report() -> Option<String> {
@@ -1068,6 +1104,8 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             tray::show_main(app, None);
         }))
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(update::UpdateState::default())
         .setup(|app| {
             let dir = data_dir(app.handle());
             crash::init(&dir);
@@ -1091,6 +1129,12 @@ pub fn run() {
                     let _ = pick_window_flow(app).await;
                 });
             })?;
+            let settings = tray::load_settings(&dir);
+            update::check_in_background(
+                app.handle().clone(),
+                settings.auto_update != Some(false),
+                settings.skip_version,
+            );
             Ok(())
         })
         .on_window_event(|window, event| match event {
@@ -1137,6 +1181,11 @@ pub fn run() {
             crash_report,
             crash_report_seen,
             open_feedback,
+            check_update,
+            pending_update,
+            install_update,
+            skip_update,
+            open_releases,
             scan_history,
             scan_diff,
             analyze_downloads,

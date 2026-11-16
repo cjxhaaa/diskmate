@@ -115,6 +115,20 @@ cargo test --release real_pick -- --ignored --nocapture      # 不动鼠标，�
   读转储：用 WinDbg 打开 .dmp，`.sympath+ <解压出的 pdb 所在目录>`，再 `.ecxr` 和 `k` 就能看到崩溃的调用栈和行号。
   pdb 只和同一次构建出的 exe 匹配。
 
+## 应用内更新
+
+- 用 Tauri 官方的 updater 插件。每个 Release 附带 `latest.json`（版本号、更新说明、安装包地址和签名），应用从
+  `https://github.com/cjxhaaa/diskmate/releases/latest/download/latest.json` 读取，启动 20 秒后检查，每天最多一次。自动检查发现新版本只在侧边栏左下角显示「新版本」，点开才弹更新窗口；
+  结果连同版本信息存在 `cache/update-check.json`，重启后不联网也能继续提示，跳过的版本不再提示；
+  托盘菜单可以手动检查，也可以关掉自动检查（设置存在 `settings.json`）。检查只是下载这个小文件，不上报任何信息。
+- 安装方式按程序所在位置判断：旁边有 `uninstall.exe` 是安装版，路径在 `scoop\apps` 下是 Scoop，其余算便携版。
+  只有安装版会自动下载安装（被动模式的 NSIS 安装程序，`/P /UPDATE /R`，只显示进度条，装好后重新打开）。
+- 更新包签名：私钥在本机 `C:\Users\40501\.tauri\diskmate-updater.key`（无密码）和仓库 Secret `TAURI_SIGNING_PRIVATE_KEY` 里，
+  公钥写在 `tauri.conf.json`。发版流程用私钥给安装包签名，应用下载后先验签，不匹配就拒绝安装。
+  **私钥要另外备份**：丢了之后，已安装的用户就收不到后续的自动更新，只能手动重装一个带新公钥的版本。
+- 调试版可以用 `DISKMATE_UPDATE_ENDPOINT` 和 `DISKMATE_UPDATE_PUBKEY` 指向本地的测试 Release（`tauri signer generate`
+  生成测试密钥、`tauri signer sign` 签名），正式版不读这两个变量。
+
 ## 已知限制
 
 - 扫描用普通权限，`System Volume Information` 等目录读不到，计入「系统保留区」。

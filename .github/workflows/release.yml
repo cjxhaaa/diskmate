@@ -4,6 +4,8 @@
 # add a CHANGELOG entry, push, then run this workflow from the Actions tab with the new tag
 # (e.g. v0.2.0). Review the draft release it creates (installer + portable zip) and publish it.
 # Then update bucket/diskmate.json (version, url, hash of the portable zip) so Scoop users get it.
+# Installed copies find the release through its latest.json once it is published; the installer is
+# signed with the TAURI_SIGNING_PRIVATE_KEY secret (see docs/TECHNICAL.md, 应用内更新).
 name: Release
 
 on:
@@ -50,10 +52,26 @@ jobs:
           $body += "`n`n### 下载`n`n- **安装版**：DiskMate_${v}_x64-setup.exe（推荐）`n- **便携版**：DiskMate_${v}_x64_portable.zip，解压即用`n- **Scoop**：``scoop update diskmate```n- DiskMate_${v}_x64_symbols.zip 是调试符号，只用来分析崩溃文件，不需要下载。"
           "body<<NOTES_EOF`n$body`nNOTES_EOF" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
+      # In-app updates are signed: the installed app only accepts an update whose signature matches
+      # the public key in tauri.conf.json. The private key and its password live in repository
+      # secrets (see docs/TECHNICAL.md); without them the build stops here.
+      - name: Check the update signing key
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) { throw "Missing secret TAURI_SIGNING_PRIVATE_KEY: in-app updates could not be signed" }
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
+          # latest.json (version, notes, installer URL and signature) is what installed copies read
+          # to find and verify an update.
+          includeUpdaterJson: true
+          updaterJsonPreferNsis: true
           tagName: ${{ inputs.tag }}
           releaseName: DiskMate ${{ inputs.tag }}
           releaseBody: ${{ steps.notes.outputs.body }}
