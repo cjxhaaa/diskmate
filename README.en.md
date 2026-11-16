@@ -59,6 +59,8 @@ Windows 10 1809+ / 11, x64:
 - **Portable** — `DiskMate_x.y.z_x64_portable.zip`; unzip and run `DiskMate.exe` (needs the WebView2 runtime, built into Windows 11).
 - **Scoop** — `scoop bucket add diskmate https://github.com/cjxhaaa/diskmate`, then `scoop install diskmate`.
 
+An installed copy updates itself: a new version shows up quietly at the bottom of the sidebar, and one click downloads it, checks its signature and installs it. Portable and Scoop copies are told how to update.
+
 The installer is not code-signed yet, so SmartScreen may warn: choose *More info → Run anyway*, or build it yourself.
 
 ## Build from source
