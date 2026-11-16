@@ -14,13 +14,13 @@ function inline(text: string): ReactNode[] {
 
 /**
  * The release notes, which are Markdown on the release page: headings and bullet points are all
- * they use, so those are drawn and everything else is shown as plain text.
+ * they use, so those are drawn and everything else is shown as plain text. The page ends with which
+ * file to download, which means nothing here: everything from the 「下载」 heading on is left out.
  */
 function Notes({ text }: { text: string }) {
-  const lines = text
-    .replace(/\r/g, "")
-    .split("\n")
-    .filter((l) => l.trim() && !/^完整更新日志/.test(l.trim()));
+  const all = text.replace(/\r/g, "").split("\n");
+  const end = all.findIndex((l) => /^#{1,6}\s+下载\s*$/.test(l.trim()));
+  const lines = (end < 0 ? all : all.slice(0, end)).filter((l) => l.trim() && !/^完整更新日志/.test(l.trim()));
   if (!lines.length) return null;
   return (
     <div className="dialog-list update-notes">

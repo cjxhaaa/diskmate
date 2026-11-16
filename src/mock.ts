@@ -279,9 +279,10 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
     case "check_update":
       await sleep(600);
       return {
-        version: "0.1.3",
-        current: "0.1.2",
-        notes: ["### 新增", "", "- **检查更新**：安装版可以在应用里直接升级。", "", "### 修复", "", "- 一些小问题。"].join("\n"),
+        version: "0.1.4",
+        current: "0.1.3",
+        // Shaped like a real release page, download section included (the dialog leaves it out).
+        notes: ["### 新增", "", "- **检查更新**：安装版可以在应用里直接升级。", "", "### 修复", "", "- 一些小问题。", "", "### 下载", "", "- **安装版**：DiskMate_0.1.4_x64-setup.exe（推荐）"].join("\n"),
         kind: "installer",
       } as T;
     case "pending_update":

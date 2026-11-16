@@ -6,7 +6,7 @@
 
 **看清 C 盘都去哪了，放心地腾出空间**
 
-Windows 磁盘分析与清理工具 · 开源免费 · 安装包 2.6 MB · 不常驻、不打扰
+Windows 磁盘分析与清理工具 · 开源免费 · 安装包 3.8 MB · 不常驻、不打扰
 
 [![版本](https://img.shields.io/github/v/release/cjxhaaa/diskmate?color=5b6cff&label=%E7%89%88%E6%9C%AC)](https://github.com/cjxhaaa/diskmate/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-8a55e8)](LICENSE)
@@ -105,7 +105,7 @@ DiskMate 的想法很简单：
 
 ## 轻量
 
-- 安装包 **2.6 MB**；关窗口后可以留在托盘，此时只占 **约 42 MB 内存**（窗口开着约 330 MB，大头是界面用的 WebView2）。
+- 安装包 **3.8 MB**；关窗口后可以留在托盘，此时只占 **约 42 MB 内存**（窗口开着约 330 MB，大头是界面用的 WebView2）。
 - 扫描和其他后台工作（智能清理检查、测量大小）各用一组 2–6 个线程，都处于 Windows 的后台模式（CPU、磁盘、内存优先级都最低），不和你正在用的程序抢资源。
 - 不添加开机启动，没有后台服务，也没有定时任务。
 - 整盘扫描一般一到三分钟，机械硬盘会久一些，扫描时会显示进度和预计剩余时间。常用页面先显示上次的结果再在后台刷新，切页约 0.3 秒。

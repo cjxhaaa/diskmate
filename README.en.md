@@ -6,7 +6,7 @@
 
 **See where your C: drive went — and free it up safely**
 
-A disk analyzer and cleaner for Windows · free & open source · 2.6 MB installer · no background services
+A disk analyzer and cleaner for Windows · free & open source · 3.8 MB installer · no background services
 
 [![Release](https://img.shields.io/github/v/release/cjxhaaa/diskmate?color=5b6cff)](https://github.com/cjxhaaa/diskmate/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-8a55e8)](LICENSE)
