@@ -249,18 +249,9 @@ button {
 .app-version {
   align-self: center;
   margin-top: 8px;
-  border: 0;
-  background: transparent;
   color: var(--text-3);
-  font: inherit;
   font-size: 11.5px;
-  padding: 2px 8px;
-  border-radius: 6px;
-  cursor: pointer;
-}
-.app-version:hover {
-  color: var(--text-2);
-  background: var(--bg-hover);
+  user-select: text;
 }
 .sidebar-foot .mini-bar {
   margin: 8px 0 4px;

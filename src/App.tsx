@@ -220,9 +220,7 @@ function Shell() {
             <div className="faint num">共 {formatBytes(drive.total)}</div>
           </div>
         )}
-        <button className="app-version num" title="点击检查更新" onClick={() => void checkUpdate()}>
-          DiskMate v{__APP_VERSION__}
-        </button>
+        <div className="app-version num">DiskMate v{__APP_VERSION__}</div>
       </aside>
       <main className="main">
         {page === "overview" && <Overview onGoClean={() => setPage("cleanup")} />}
