@@ -521,8 +521,10 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
       await sleep(40);
       return getTree(String(args?.path), Number(args?.depth), Number(args?.minShare), Number(args?.limit)) as T;
     case "restore_scan": {
-      // As if the last scan's tree had been saved: the same scan the history ends with.
+      // As if the last scan's tree had been saved: the same scan the history ends with. Only C: has
+      // one; other drives were never scanned.
       await sleep(300);
+      if (String(args?.root).toUpperCase() !== "C:\\") return null as T;
       const t = now();
       return {
         root: "C:\\", total, free, scanned: 399 * GB, files: 1_230_000, dirs: 156_000, deniedDirs: 214,

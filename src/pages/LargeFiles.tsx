@@ -3,6 +3,7 @@ import { Archive, Disc, Download, File, FileBox, Film, FolderOpen, Lock, Trash, 
 import { api, type LargeFile, type MoveOutcome } from "../api";
 import { DeleteDialog } from "../components/DeleteDialog";
 import { MoveDialog } from "../components/MoveDialog";
+import { DrivePicker } from "../components/ui";
 import { failNote, formatBytes, formatDate } from "../format";
 import { useStore } from "../store";
 
@@ -47,7 +48,7 @@ function protectedReason(f: LargeFile): string | null {
 
 /** The large-files tab of the Files page: everything over 100 MB the last scan saw. */
 export function LargeFilesPanel() {
-  const { current, toast, refreshDrives, startScan, scanning, drives, restoreSaved } = useStore();
+  const { current, toast, refreshDrives, startScan, scanning, drives, restoreSaved, root, setRoot } = useStore();
   const [files, setFiles] = useState<LargeFile[] | null>(null);
   const [kind, setKind] = useState<Kind>("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -116,6 +117,7 @@ export function LargeFilesPanel() {
           超过 100 MB 的文件
         </div>
         <div className="filter-chips">
+          {drives.length > 1 && <DrivePicker compact drives={drives} value={root} onChange={setRoot} />}
           {KINDS.map((k) => (
             <button key={k.id} className={`chip ${kind === k.id ? "active" : ""}`} onClick={() => setKind(k.id)}>
               {k.label}

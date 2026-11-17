@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, FolderOpen, ScanSearch, Search, SlidersHorizontal, X } from "lucide-react";
+import { ArrowLeft, FolderOpen, ScanSearch, Search, SlidersHorizontal, X, Zap } from "lucide-react";
 import { api, type Hit, type TreeItem } from "../api";
 import { HitList } from "../components/HitList";
 import { openEntry, useItemActions, type ActionTarget } from "../components/ItemActions";
 import { itemKey, SpaceMap } from "../components/SpaceMap";
 import { TreeTable } from "../components/TreeTable";
+import { DrivePicker } from "../components/ui";
 import { KINDS, kindColor, kindsOf } from "../filetypes";
 import { formatAgo, formatBytes, formatCount, formatDate, percent } from "../format";
 import { useStore } from "../store";
@@ -42,7 +43,20 @@ export const targetOf = (i: TreeItem | Hit): ActionTarget =>
     : { path: i.path, name: i.name, size: i.size, isDir: i.isDir };
 
 export function Explorer() {
-  const { current, scanning, root: driveRoot, startScan, restoreSaved } = useStore();
+  const { current, scanning, root: driveRoot, setRoot, drives, startScan, restoreSaved } = useStore();
+  const [canFast, setCanFast] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void api
+      .canFastScan(driveRoot)
+      .then((v) => alive && setCanFast(v))
+      .catch(() => alive && setCanFast(false));
+    return () => {
+      alive = false;
+    };
+  }, [driveRoot]);
+  // The same drive as on the overview: picking one here picks it there too.
+  const picker = drives.length > 1 && <DrivePicker drives={drives} value={driveRoot} onChange={setRoot} />;
   const [restoring, setRestoring] = useState(false);
   const [tab, setTab] = useState<Tab>("map");
   const [path, setPath] = useState<string | null>(null);
@@ -95,6 +109,7 @@ export function Explorer() {
             <h1 className="page-title">空间分析</h1>
             <div className="page-sub">用色块大小直观地看每个文件夹、每类文件占了多少</div>
           </div>
+          {picker}
         </div>
         <div className="card empty">
           <div className="empty-icon">
@@ -111,10 +126,24 @@ export function Explorer() {
             </div>
           ) : (
             <>
-              <div>{current?.fromHistory ? "上次的扫描没有保存空间地图（旧版本扫描的），需要重新扫描一次" : `需要先扫描一次 ${driveRoot.replace("\\", "")}`}</div>
-              <button className="btn btn-primary" disabled={!!scanning} onClick={() => startScan()}>
-                开始扫描
-              </button>
+              <div>
+                {current?.fromHistory ? "上次的扫描没有保存空间地图（旧版本扫描的），需要重新扫描一次" : `需要先扫描一次 ${driveRoot.replace("\\", "")}`}
+                {scanning && (
+                  <div className="faint" style={{ fontSize: 13, marginTop: 4 }}>
+                    正在扫描 {scanning.root}，完成后才能开始下一个
+                  </div>
+                )}
+              </div>
+              <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+                <button className="btn btn-primary" disabled={!!scanning} onClick={() => startScan()}>
+                  开始扫描
+                </button>
+                {canFast && (
+                  <button className="btn" disabled={!!scanning} title="直接读取 NTFS 的主文件表，通常几秒就能扫完；需要管理员权限，Windows 会先弹窗询问" onClick={() => startScan(undefined, true)}>
+                    <Zap size={15} /> 快速扫描（需管理员）
+                  </button>
+                )}
+              </div>
             </>
           )}
         </div>
@@ -131,7 +160,9 @@ export function Explorer() {
             扫描于 {formatDate(current!.scannedAt)}（{formatAgo(current!.scannedAt)}）· 点击色块进入文件夹，右键查看能做什么
           </div>
         </div>
-        <div className="tabs" role="tablist">
+        <div className="overview-actions">
+          {picker}
+          <div className="tabs" role="tablist">
           {(
             [
               ["map", "空间地图"],
@@ -143,6 +174,7 @@ export function Explorer() {
               {label}
             </button>
           ))}
+          </div>
         </div>
       </div>
 
