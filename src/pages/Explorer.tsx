@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, FolderOpen, ScanSearch, Search, SlidersHorizontal, X, Zap } from "lucide-react";
+import { ArrowLeft, FolderOpen, RefreshCw, ScanSearch, Search, SlidersHorizontal, X, Zap } from "lucide-react";
 import { api, type Hit, type TreeItem } from "../api";
 import { HitList } from "../components/HitList";
 import { openEntry, useItemActions, type ActionTarget } from "../components/ItemActions";
@@ -101,106 +101,121 @@ export function Explorer() {
   // "Open on the map": folders anywhere; files from the other tabs (on the map they already are).
   const actions = useItemActions(changed, (t) => (!t.lumped && (t.isDir || tab !== "map") ? [openEntry(() => show(t), t.isDir)] : []));
 
-  if (!root || !path) {
-    return (
-      <div className="page">
-        <div className="page-head">
-          <div>
-            <h1 className="page-title">空间分析</h1>
-            <div className="page-sub">用色块大小直观地看每个文件夹、每类文件占了多少</div>
-          </div>
-          {picker}
-        </div>
-        <div className="card empty">
-          <div className="empty-icon">
-            <ScanSearch size={30} />
-          </div>
-          {restoring ? (
-            <div>正在读取上次的扫描结果…</div>
-          ) : scanningHere ? (
-            <div>
-              正在扫描，已经看过 {formatCount(scanning?.progress?.files ?? 0)} 个文件…
-              <div className="faint" style={{ fontSize: 13, marginTop: 4 }}>
-                扫描完成后这里会显示空间地图
-              </div>
-            </div>
-          ) : (
-            <>
-              <div>
-                {current?.fromHistory ? "上次的扫描没有保存空间地图（旧版本扫描的），需要重新扫描一次" : `需要先扫描一次 ${driveRoot.replace("\\", "")}`}
-                {scanning && (
-                  <div className="faint" style={{ fontSize: 13, marginTop: 4 }}>
-                    正在扫描 {scanning.root}，完成后才能开始下一个
-                  </div>
-                )}
-              </div>
-              <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
-                <button className="btn btn-primary" disabled={!!scanning} onClick={() => startScan()}>
-                  开始扫描
-                </button>
-                {canFast && (
-                  <button className="btn" disabled={!!scanning} title="直接读取 NTFS 的主文件表，通常几秒就能扫完；需要管理员权限，Windows 会先弹窗询问" onClick={() => startScan(undefined, true)}>
-                    <Zap size={15} /> 快速扫描（需管理员）
-                  </button>
-                )}
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-    );
-  }
+  const ready = !!root && !!path;
+  const driveName = driveRoot.replace("\\", "");
+  const tabs = (
+    <div className="tabs" role="tablist">
+      {(
+        [
+          ["map", "空间地图"],
+          ["types", "文件类型"],
+          ["stale", "很久没动"],
+        ] as const
+      ).map(([id, label]) => (
+        <button key={id} role="tab" aria-selected={tab === id} className={`tab ${tab === id ? "active" : ""}`} disabled={!ready} onClick={() => setTab(id)}>
+          {label}
+        </button>
+      ))}
+    </div>
+  );
 
   return (
     <div className="page space-page">
+      {/* The frame stays put whatever the drive's state: title, which scan this is, the drive and
+          scan controls, then the tabs; only what is below them changes. */}
       <div className="page-head">
         <div>
           <h1 className="page-title">空间分析</h1>
           <div className="page-sub">
-            扫描于 {formatDate(current!.scannedAt)}（{formatAgo(current!.scannedAt)}）· 点击色块进入文件夹，右键查看能做什么
+            {ready && current
+              ? `${driveName} · 扫描于 ${formatDate(current.scannedAt)}（${formatAgo(current.scannedAt)}）· ${formatBytes(current.scanned)}`
+              : `${driveName} · ${restoring ? "正在读取上次的扫描结果" : scanningHere ? "正在扫描" : "还没有扫描"}`}
           </div>
         </div>
         <div className="overview-actions">
           {picker}
-          <div className="tabs" role="tablist">
-          {(
-            [
-              ["map", "空间地图"],
-              ["types", "文件类型"],
-              ["stale", "很久没动"],
-            ] as const
-          ).map(([id, label]) => (
-            <button key={id} role="tab" aria-selected={tab === id} className={`tab ${tab === id ? "active" : ""}`} onClick={() => setTab(id)}>
-              {label}
+          {/* Always here, so switching drives never moves the picker. */}
+          <button className="btn scan-btn" disabled={!!scanning} title={scanning ? `正在扫描 ${scanning.root}` : undefined} onClick={() => startScan()}>
+            <RefreshCw size={15} className={scanningHere ? "spin" : undefined} /> {scanningHere ? "正在扫描…" : ready ? "重新扫描" : "扫描"}
+          </button>
+          {canFast && (
+            <button className="btn" disabled={!!scanning} title={FAST_TIP} onClick={() => startScan(undefined, true)}>
+              <Zap size={15} /> 快速扫描
             </button>
-          ))}
-          </div>
+          )}
         </div>
       </div>
 
-      {tab === "map" && (
-        <MapTab
-          root={root}
-          path={path}
-          setPath={(p) => {
-            setPath(p);
-            setSelected(null);
-          }}
-          selected={selected}
-          setSelected={setSelected}
-          reload={reload}
-          onMenu={actions.open}
-          onShow={show}
-        />
+      {!ready ? (
+        <>
+          <div className="space-tabs-row">{tabs}</div>
+          <div className="card empty space-empty">
+            <div className="empty-icon">
+              <ScanSearch size={30} />
+            </div>
+            {restoring ? (
+              <div>正在读取 {driveName} 上次的扫描结果…</div>
+            ) : scanningHere ? (
+              <div>
+                正在扫描 {driveName}，已经看过 {formatCount(scanning?.progress?.files ?? 0)} 个文件…
+                <div className="faint" style={{ fontSize: 13, marginTop: 4 }}>
+                  扫描完成后这里会显示空间地图
+                </div>
+              </div>
+            ) : (
+              <>
+                <div>
+                  {current?.fromHistory ? `${driveName} 上次的扫描没有保存空间地图（旧版本扫描的），需要重新扫描一次` : `还没有扫描过 ${driveName}，扫描后可以在这里看到空间都用在了哪里`}
+                  <div className="faint" style={{ fontSize: 13, marginTop: 4 }}>
+                    {scanning ? `正在扫描 ${scanning.root}，完成后才能开始下一个` : canFast ? "普通扫描一般一到三分钟；快速扫描直接读取主文件表，几秒就好，但需要管理员授权" : "整盘扫描一般一到三分钟，机械硬盘会久一些"}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+                  <button className="btn btn-primary" disabled={!!scanning} onClick={() => startScan()}>
+                    扫描 {driveName}
+                  </button>
+                  {canFast && (
+                    <button className="btn" disabled={!!scanning} title={FAST_TIP} onClick={() => startScan(undefined, true)}>
+                      <Zap size={15} /> 快速扫描（需管理员）
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        </>
+      ) : (
+        <>
+          {tab === "map" && (
+            <MapTab
+              tabs={tabs}
+              root={root}
+              path={path}
+              setPath={(p) => {
+                setPath(p);
+                setSelected(null);
+              }}
+              selected={selected}
+              setSelected={setSelected}
+              reload={reload}
+              onMenu={actions.open}
+              onShow={show}
+            />
+          )}
+          {tab === "types" && <SpaceTypes tabs={tabs} root={root} reload={reload} onShow={show} onMenu={(h, x, y) => actions.open(targetOf(h), x, y)} />}
+          {tab === "stale" && <SpaceStale tabs={tabs} root={root} reload={reload} onShow={show} onMenu={(h, x, y) => actions.open(targetOf(h), x, y)} />}
+        </>
       )}
-      {tab === "types" && <SpaceTypes root={root} reload={reload} onShow={show} onMenu={(h, x, y) => actions.open(targetOf(h), x, y)} />}
-      {tab === "stale" && <SpaceStale root={root} reload={reload} onShow={show} onMenu={(h, x, y) => actions.open(targetOf(h), x, y)} />}
       {actions.element}
     </div>
   );
 }
 
+const FAST_TIP = "直接读取 NTFS 的主文件表，通常几秒就能扫完整个盘；需要管理员权限，Windows 会先弹窗询问";
+
 interface MapTabProps {
+  /** The tab switcher, drawn at the start of this tab's own toolbar row. */
+  tabs: React.ReactNode;
   root: string;
   path: string;
   setPath: (p: string) => void;
@@ -224,7 +239,7 @@ const SIZES: [number, string][] = [
   [10 * GB, "10 GB 以上"],
 ];
 
-function MapTab({ root, path, setPath, selected, setSelected, reload, onMenu, onShow }: MapTabProps) {
+function MapTab({ tabs, root, path, setPath, selected, setSelected, reload, onMenu, onShow }: MapTabProps) {
   const [map, setMap] = useState<TreeItem | null>(null);
   const [list, setList] = useState<TreeItem | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -335,20 +350,8 @@ function MapTab({ root, path, setPath, selected, setSelected, reload, onMenu, on
 
   return (
     <>
-      <div className="map-toolbar">
-        <button className="icon-btn" disabled={crumbs.length <= 1} title="上一级（Backspace）" onClick={up}>
-          <ArrowLeft size={18} />
-        </button>
-        <div className="crumbs">
-          {crumbs.map((c, i) => (
-            <span key={c.path} style={{ display: "flex", alignItems: "center" }}>
-              {i > 0 && <span className="faint">›</span>}
-              <button className={`crumb ${i === crumbs.length - 1 ? "last" : ""}`} onClick={() => setPath(c.path)}>
-                {c.label}
-              </button>
-            </span>
-          ))}
-        </div>
+      <div className="space-tabs-row">
+        {tabs}
         <div className="map-tools">
           <label className="search-box">
             <Search size={15} />
@@ -361,9 +364,6 @@ function MapTab({ root, path, setPath, selected, setSelected, reload, onMenu, on
           </label>
           <button className={`btn btn-sm ${showFilters || filterCount ? "btn-on" : ""}`} onClick={() => setShowFilters((v) => !v)}>
             <SlidersHorizontal size={14} /> 筛选{filterCount ? ` ${filterCount}` : ""}
-          </button>
-          <button className="icon-btn" title="在资源管理器中打开这个文件夹" onClick={() => void api.revealPath(path)}>
-            <FolderOpen size={17} />
           </button>
         </div>
       </div>
@@ -404,6 +404,26 @@ function MapTab({ root, path, setPath, selected, setSelected, reload, onMenu, on
 
       <div className="space-body">
         <div className="card map-card">
+          {/* Where the map is: back, the path, its size, and the folder in File Explorer. */}
+          <div className="map-crumbs">
+            <button className="icon-btn" disabled={crumbs.length <= 1} title="上一级（Backspace）" onClick={up}>
+              <ArrowLeft size={17} />
+            </button>
+            <div className="crumbs">
+              {crumbs.map((c, i) => (
+                <span key={c.path} className="crumb-wrap">
+                  {i > 0 && <span className="faint">›</span>}
+                  <button className={`crumb ${i === crumbs.length - 1 ? "last" : ""}`} onClick={() => setPath(c.path)}>
+                    {c.label}
+                  </button>
+                </span>
+              ))}
+            </div>
+            {map && <span className="map-crumbs-size num">{formatBytes(map.size)}</span>}
+            <button className="icon-btn" title="在资源管理器中打开这个文件夹" onClick={() => void api.revealPath(path)}>
+              <FolderOpen size={16} />
+            </button>
+          </div>
           {map ? (
             map.children?.length ? (
               <SpaceMap root={map} hovered={hovered ? itemKey(hovered) : null} selected={selected} kind={legendKind} onHover={hover} onOpen={open} onSelect={select} onMenu={menu} />

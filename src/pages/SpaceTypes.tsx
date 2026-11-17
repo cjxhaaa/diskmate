@@ -5,6 +5,7 @@ import { KINDS, kindColor, kindsOf } from "../filetypes";
 import { formatBytes, formatCount, percent } from "../format";
 
 interface Props {
+  tabs: React.ReactNode;
   root: string;
   reload: number;
   onShow: (t: { path: string; isDir: boolean }) => void;
@@ -19,7 +20,7 @@ const EXTS_SHOWN = 40;
  * the disk — videos, installers, build output — rather than where it is. Pick a kind or an
  * extension to see its biggest files.
  */
-export function SpaceTypes({ root, reload, onShow, onMenu }: Props) {
+export function SpaceTypes({ tabs, root, reload, onShow, onMenu }: Props) {
   const [types, setTypes] = useState<number[] | null>(null);
   const [total, setTotal] = useState(0);
   const [exts, setExts] = useState<ExtStat[] | null>(null);
@@ -65,6 +66,13 @@ export function SpaceTypes({ root, reload, onShow, onMenu }: Props) {
   const filesTitle = ext !== null ? `最大的 ${ext ? "." + ext : "无扩展名"} 文件` : kind !== null ? `最大的${KINDS[kind].label}文件` : "整个磁盘最大的文件";
 
   return (
+    <>
+    <div className="space-tabs-row">
+      {tabs}
+      <span className="faint" style={{ fontSize: 12.5 }}>
+        整个磁盘按文件类型统计，点一类或一种扩展名，右边列出最大的文件
+      </span>
+    </div>
     <div className="space-body">
       <div className="card types-card">
         <div className="side-head">
@@ -144,5 +152,6 @@ export function SpaceTypes({ root, reload, onShow, onMenu }: Props) {
         )}
       </div>
     </div>
+    </>
   );
 }

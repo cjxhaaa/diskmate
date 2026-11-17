@@ -5,6 +5,7 @@ import { HitList } from "../components/HitList";
 import { formatBytes } from "../format";
 
 interface Props {
+  tabs: React.ReactNode;
   root: string;
   reload: number;
   onShow: (t: { path: string; isDir: boolean }) => void;
@@ -29,7 +30,7 @@ const SIZES: [number, string][] = [
  * case", games and tools no longer used. Windows and installed programs are left out — they are
  * rarely written to however much they are used.
  */
-export function SpaceStale({ root, reload, onShow, onMenu }: Props) {
+export function SpaceStale({ tabs, root, reload, onShow, onMenu }: Props) {
   const [days, setDays] = useState(365);
   const [minSize, setMinSize] = useState(500 * MB);
   const [hits, setHits] = useState<Hit[] | null>(null);
@@ -50,20 +51,10 @@ export function SpaceStale({ root, reload, onShow, onMenu }: Props) {
   const label = AGES.find(([d]) => d === days)?.[1];
 
   return (
-    <div className="card stale-card">
-      <div className="panel-head">
-        <div>
-          <div style={{ fontWeight: 650 }}>
-            {hits ? (
-              <>
-                {hits.length} 个文件夹超过{label}没有改动，合计 <span className="num">{formatBytes(total)}</span>
-              </>
-            ) : (
-              "正在查找…"
-            )}
-          </div>
-        </div>
-        <div className="filter-chips">
+    <>
+    <div className="space-tabs-row">
+      {tabs}
+      <div className="filter-chips">
           <span className="chip-label">多久没改动</span>
           {AGES.map(([d, l]) => (
             <button key={d} className={`chip ${days === d ? "active" : ""}`} onClick={() => setDays(d)}>
@@ -78,7 +69,19 @@ export function SpaceStale({ root, reload, onShow, onMenu }: Props) {
               {l}
             </button>
           ))}
-        </div>
+      </div>
+    </div>
+    <div className="card stale-card">
+      <div className="side-head">
+        <span>
+          {hits ? (
+            <>
+              {hits.length} 个文件夹超过{label}没有改动，合计 <span className="num">{formatBytes(total)}</span>
+            </>
+          ) : (
+            "正在查找…"
+          )}
+        </span>
       </div>
       <div className="stale-note">
         <Info size={14} />
@@ -92,5 +95,6 @@ export function SpaceStale({ root, reload, onShow, onMenu }: Props) {
         <div className="skeleton" style={{ height: 240 }} />
       )}
     </div>
+    </>
   );
 }

@@ -1156,16 +1156,45 @@ button {
 .space-page .page-head {
   margin-bottom: 16px;
 }
-.map-toolbar {
+/* Under the header: the tab switcher, and on its right whatever the tab itself needs. */
+.space-tabs-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
   margin-bottom: 12px;
+  min-height: 40px;
+}
+.space-empty {
+  flex: none;
+}
+/* The map's own header: where it is, and how big that is. */
+.map-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px 8px;
   min-width: 0;
 }
-.map-toolbar .crumbs {
+.map-crumbs .crumbs {
   flex: 1;
   min-width: 0;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+.crumb-wrap {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.map-crumbs .crumb {
+  white-space: nowrap;
+}
+.map-crumbs-size {
+  font-size: 13px;
+  color: var(--text-2);
+  font-weight: 600;
 }
 .map-tools {
   display: flex;
@@ -1231,11 +1260,14 @@ button {
   font-size: 13px;
   padding: 0 8px;
 }
+/* Fills what the header and the tab row leave: both columns as tall as that, each scrolling
+   inside its own card, so the map uses the whole window and the list never ends halfway down. */
 .space-body {
-  flex: 1;
+  flex: 1 1 0;
   min-height: 480px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 360px;
+  grid-template-rows: minmax(0, 1fr);
   gap: 16px;
 }
 .map-card {
@@ -1249,7 +1281,6 @@ button {
   flex-direction: column;
   padding: 10px;
   min-height: 0;
-  max-height: calc(100vh - 210px);
   overflow: hidden;
 }
 .side-head {
@@ -1601,7 +1632,6 @@ button {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  max-height: calc(100vh - 160px);
   overflow-y: auto;
 }
 .types-card > * {
