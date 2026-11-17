@@ -9,6 +9,7 @@ import { DrivePicker } from "../components/ui";
 import { KINDS, kindColor, kindsOf } from "../filetypes";
 import { formatAgo, formatBytes, formatCount, formatDate, percent } from "../format";
 import { useStore } from "../store";
+import { Scanning } from "./Overview";
 import { SpaceStale } from "./SpaceStale";
 import { SpaceTypes } from "./SpaceTypes";
 
@@ -78,10 +79,12 @@ export function Explorer() {
   const root = current && !current.fromHistory ? current.root : null;
   const scanningHere = scanning?.root.toUpperCase() === driveRoot.toUpperCase();
 
-  // A new scan (or another drive) starts the map over from the top.
+  // A new scan (or another drive) starts the map over from the top, and reads it again: already at
+  // the top, the path alone would not change and the map would keep showing the old scan.
   useEffect(() => {
     setPath(root);
     setSelected(null);
+    setReload((n) => n + 1);
   }, [root, current?.scannedAt]);
 
   const changed = useCallback(() => setReload((n) => n + 1), []);
@@ -146,22 +149,19 @@ export function Explorer() {
         </div>
       </div>
 
+      {/* The scan running on this drive, whichever page started it. */}
+      {scanningHere && <Scanning note={ready ? "下面是上次的扫描结果，这次扫描完成后会自动换成新的。" : "扫描完成后，这里会显示空间地图。"} />}
+
       {!ready ? (
         <>
           <div className="space-tabs-row">{tabs}</div>
+          {!scanningHere && (
           <div className="card empty space-empty">
             <div className="empty-icon">
               <ScanSearch size={30} />
             </div>
             {restoring ? (
               <div>正在读取 {driveName} 上次的扫描结果…</div>
-            ) : scanningHere ? (
-              <div>
-                正在扫描 {driveName}，已经看过 {formatCount(scanning?.progress?.files ?? 0)} 个文件…
-                <div className="faint" style={{ fontSize: 13, marginTop: 4 }}>
-                  扫描完成后这里会显示空间地图
-                </div>
-              </div>
             ) : (
               <>
                 <div>
@@ -183,6 +183,7 @@ export function Explorer() {
               </>
             )}
           </div>
+          )}
         </>
       ) : (
         <>

@@ -812,6 +812,14 @@ button {
   gap: 22px;
   align-items: center;
 }
+.scan-note {
+  margin-top: 6px;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+.space-page .scan-state {
+  margin-bottom: 12px;
+}
 .scan-path {
   font-family: "Cascadia Mono", Consolas, monospace;
   font-size: 12px;

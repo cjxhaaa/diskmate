@@ -185,7 +185,12 @@ function scanFraction(p: ScanProgress | null, prevFiles: number | undefined, use
   return f > 0 ? Math.min(f, 0.99) : null;
 }
 
-function Scanning() {
+/**
+ * The running scan: how far, how long, what it is looking at, and a stop button. Shown on the
+ * overview and on the space map, which both draw from the same scan. `note` is a line of the
+ * page's own (the space map says its map is the previous result until this one finishes).
+ */
+export function Scanning({ note }: { note?: string }) {
   const { scanning, cancelScan, scans, drives } = useStore();
   if (!scanning) return null;
   const p = scanning.progress;
@@ -222,6 +227,7 @@ function Scanning() {
           </div>
         )}
         <div className="scan-path">{p?.current || "准备中…"}</div>
+        {note && <div className="scan-note">{note}</div>}
       </div>
       <button className="btn" onClick={cancelScan}>
         <Square size={14} /> 停止
