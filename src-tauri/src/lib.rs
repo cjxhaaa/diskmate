@@ -295,6 +295,18 @@ fn start_scan(
     Ok(())
 }
 
+/// The scan of `root` running now, as far as it has got, for the space map to draw while it runs;
+/// `None` when that drive is not being scanned (or a fast scan is reading the table instead).
+#[tauri::command]
+fn scan_live(state: State<AppState>, root: String) -> Option<scan::TreeItem> {
+    let ctx = state.scanning.lock().unwrap().clone()?;
+    let tree = ctx.live_tree(0.0005, 60)?;
+    tree.path
+        .to_uppercase()
+        .starts_with(&root.to_uppercase())
+        .then_some(tree)
+}
+
 #[derive(Serialize, Clone)]
 struct ScanError {
     root: String,
@@ -1358,6 +1370,7 @@ pub fn run() {
             list_drives,
             start_scan,
             can_fast_scan,
+            scan_live,
             cancel_scan,
             scan_summaries,
             get_tree,

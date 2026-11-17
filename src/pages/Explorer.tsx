@@ -105,7 +105,11 @@ export function Explorer() {
   const actions = useItemActions(changed, (t) => (!t.lumped && (t.isDir || tab !== "map") ? [openEntry(() => show(t), t.isDir)] : []));
 
   const ready = !!root && !!path;
+  // While this drive is scanned the old map goes: a normal scan's map grows as it walks the disk;
+  // a fast scan has nothing to show until its few seconds are up.
+  const live = scanningHere && !scanning?.fast;
   const driveName = driveRoot.replace("\\", "");
+  const shownTab: Tab = scanningHere ? "map" : tab;
   const tabs = (
     <div className="tabs" role="tablist">
       {(
@@ -115,7 +119,14 @@ export function Explorer() {
           ["stale", "很久没动"],
         ] as const
       ).map(([id, label]) => (
-        <button key={id} role="tab" aria-selected={tab === id} className={`tab ${tab === id ? "active" : ""}`} disabled={!ready} onClick={() => setTab(id)}>
+        <button
+          key={id}
+          role="tab"
+          aria-selected={shownTab === id}
+          className={`tab ${shownTab === id ? "active" : ""}`}
+          disabled={scanningHere ? id !== "map" : !ready}
+          onClick={() => setTab(id)}
+        >
           {label}
         </button>
       ))}
@@ -150,12 +161,25 @@ export function Explorer() {
       </div>
 
       {/* The scan running on this drive, whichever page started it. */}
-      {scanningHere && <Scanning note={ready ? "下面是上次的扫描结果，这次扫描完成后会自动换成新的。" : "扫描完成后，这里会显示空间地图。"} />}
+      {scanningHere && (
+        <Scanning
+          note={
+            live
+              ? "空间地图正跟着扫描实时生成；扫完后可以点进文件夹、查看文件类型。"
+              : "快速扫描读完主文件表就会显示空间地图，一般只要几秒。"
+          }
+        />
+      )}
 
-      {!ready ? (
+      {scanningHere ? (
+        live ? (
+          <LiveMap tabs={tabs} root={driveRoot} />
+        ) : (
+          <div className="space-tabs-row">{tabs}</div>
+        )
+      ) : !ready ? (
         <>
           <div className="space-tabs-row">{tabs}</div>
-          {!scanningHere && (
           <div className="card empty space-empty">
             <div className="empty-icon">
               <ScanSearch size={30} />
@@ -183,7 +207,6 @@ export function Explorer() {
               </>
             )}
           </div>
-          )}
         </>
       ) : (
         <>
@@ -209,6 +232,76 @@ export function Explorer() {
       )}
       {actions.element}
     </div>
+  );
+}
+
+/**
+ * The map of the scan under way: the top folders with what has been counted in them so far, read
+ * again every moment, so it grows as the disk is walked (as SpaceSniffer's does). Folders still
+ * being walked breathe; going into folders waits for the finished scan.
+ */
+function LiveMap({ tabs, root }: { tabs: React.ReactNode; root: string }) {
+  const [tree, setTree] = useState<TreeItem | null>(null);
+  const [hovered, setHovered] = useState<TreeItem | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const tick = () =>
+      void api
+        .scanLive(root)
+        .then((t) => alive && t && setTree(t))
+        .catch(() => {});
+    tick();
+    const timer = setInterval(tick, 800);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [root]);
+  const noop = useCallback(() => {}, []);
+  const legend = tree ? kindsOf(tree.types) : [];
+  return (
+    <>
+      <div className="space-tabs-row">
+        {tabs}
+        <span className="live-badge">
+          <span className="live-dot" /> 实时生成中
+        </span>
+      </div>
+      <div className="space-body">
+        <div className="card map-card">
+          <div className="map-crumbs">
+            <div className="crumbs">
+              <span className="crumb last">{root.replace(/\\$/, "")}</span>
+            </div>
+            {tree && <span className="map-crumbs-size num">已找到 {formatBytes(tree.size)}</span>}
+          </div>
+          {tree?.children?.length ? (
+            <SpaceMap root={tree} live hovered={hovered ? itemKey(hovered) : null} selected={null} kind={null} onHover={setHovered} onOpen={noop} onSelect={noop} onMenu={noop} />
+          ) : (
+            <div className="skeleton" style={{ flex: 1 }} />
+          )}
+          <div className="map-foot">
+            <div className="map-legend">
+              {legend.map(([k, v]) => (
+                <span key={k} className="legend-chip">
+                  <span className="swatch" style={{ background: kindColor(k) }} />
+                  {KINDS[k].short}
+                  <span className="num faint">{percent(v, tree!.size)}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="card side-card">
+          <div className="side-head">
+            <span>
+              {root.replace(/\\$/, "")} <span className="faint num">· {tree ? `${formatCount(tree.files)} 个文件` : "…"}</span>
+            </span>
+          </div>
+          {tree ? <TreeTable root={tree} hovered={hovered ? itemKey(hovered) : null} selected={null} onHover={setHovered} onOpen={noop} onSelect={noop} onMenu={noop} /> : <div className="skeleton" style={{ height: 200 }} />}
+        </div>
+      </div>
+    </>
   );
 }
 

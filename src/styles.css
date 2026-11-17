@@ -39,28 +39,38 @@
   --res-net: #c56a0c;
   --res-gpu: #8a55e8;
 
-  /* Space map file kinds (src/filetypes.ts): a validated categorical palette in its fixed order,
-     plus two grays for system and other. Ink is whichever of white / dark reads better. */
-  --kind-0: #eb6834;
-  --kind-1: #e87ba4;
-  --kind-2: #e34948;
-  --kind-3: #eda100;
-  --kind-4: #6250d6;
-  --kind-5: #2a78d6;
-  --kind-6: #1baf7a;
-  --kind-7: #008300;
-  --kind-8: #8b919c;
-  --kind-9: #c3c8d1;
+  /* Space map file kinds (src/filetypes.ts): Apple's system hues around DiskMate's own blue-violet
+     (programs), stepped per theme and checked as a set for color-blind separation, plus Apple's
+     grays for system and other. Ink is whichever of white / dark reads better on each. */
+  --kind-0: #ff6a3d;
+  --kind-1: #ff4f8b;
+  --kind-2: #0ea5e9;
+  --kind-3: #e09400;
+  --kind-4: #a259ff;
+  --kind-5: #5b6cff;
+  --kind-6: #00ad97;
+  --kind-7: #34b04f;
+  --kind-8: #8e8e93;
+  --kind-9: #c7c7cc;
   --kind-ink-0: #141a2a;
   --kind-ink-1: #141a2a;
   --kind-ink-2: #141a2a;
   --kind-ink-3: #141a2a;
-  --kind-ink-4: #ffffff;
+  --kind-ink-4: #141a2a;
   --kind-ink-5: #ffffff;
   --kind-ink-6: #141a2a;
-  --kind-ink-7: #ffffff;
+  --kind-ink-7: #141a2a;
   --kind-ink-8: #141a2a;
   --kind-ink-9: #141a2a;
+  /* Translucent surfaces and accent glows for the space map, as plain values: the CSS pipeline
+     drops color-mix() with variables inside it. */
+  --glass: rgba(255, 255, 255, 0.74);
+  --glass-soft: rgba(238, 241, 248, 0.72);
+  --glass-strong: rgba(255, 255, 255, 0.88);
+  --glass-edge: rgba(255, 255, 255, 0.6);
+  --accent-wash: rgba(91, 108, 255, 0.07);
+  --accent-2-wash: rgba(123, 77, 255, 0.06);
+  --accent-glow: rgba(91, 108, 255, 0.45);
 
   color-scheme: light;
 }
@@ -90,16 +100,16 @@
     --res-disk: #1f9e73;
     --res-net: #cd7c25;
     --res-gpu: #9873ef;
-    --kind-0: #d95926;
-    --kind-1: #d55181;
-    --kind-2: #e66767;
-    --kind-3: #c98500;
-    --kind-4: #9085e9;
-    --kind-5: #3987e5;
-    --kind-6: #199e70;
-    --kind-7: #0ca30c;
-    --kind-8: #737b8f;
-    --kind-9: #4c5468;
+    --kind-0: #e85a30;
+    --kind-1: #ef4f87;
+    --kind-2: #1c9ad6;
+    --kind-3: #c58200;
+    --kind-4: #9a5cf5;
+    --kind-5: #6f7dff;
+    --kind-6: #0aa892;
+    --kind-7: #2ea84b;
+    --kind-8: #6e7385;
+    --kind-9: #454b5e;
     --kind-ink-0: #141a2a;
     --kind-ink-1: #141a2a;
     --kind-ink-2: #141a2a;
@@ -110,6 +120,13 @@
     --kind-ink-7: #141a2a;
     --kind-ink-8: #ffffff;
     --kind-ink-9: #ffffff;
+    --glass: rgba(22, 27, 44, 0.74);
+    --glass-soft: rgba(27, 33, 53, 0.7);
+    --glass-strong: rgba(22, 27, 44, 0.9);
+    --glass-edge: rgba(255, 255, 255, 0.04);
+    --accent-wash: rgba(124, 139, 255, 0.09);
+    --accent-2-wash: rgba(123, 77, 255, 0.08);
+    --accent-glow: rgba(124, 139, 255, 0.45);
     color-scheme: dark;
   }
 }
@@ -1309,47 +1326,67 @@ button {
   position: relative;
   flex: 1;
   min-height: 400px;
-  border-radius: 10px;
+  border-radius: 14px;
   overflow: hidden;
-  background: var(--bg-soft);
+  /* A faint wash of the accent, so the tiles sit on something rather than on flat gray. */
+  background:
+    radial-gradient(120% 90% at 0% 0%, var(--accent-wash), transparent 60%),
+    radial-gradient(100% 80% at 100% 100%, var(--accent-2-wash), transparent 60%),
+    var(--bg-soft);
   user-select: none;
 }
 .mt {
   position: absolute;
-  border-radius: 4px;
+  border-radius: 7px;
   overflow: hidden;
   cursor: default;
 }
 .mt-open {
   cursor: pointer;
 }
+/* Folders drawn with their contents: frosted panels, one shade apart per level. */
 .mt-frame {
-  background: var(--bg-elev);
-  box-shadow: inset 0 0 0 1px var(--border);
+  background: var(--glass);
+  box-shadow:
+    inset 0 0 0 1px var(--border),
+    inset 0 1px 0 var(--glass-edge);
+  border-radius: 10px;
 }
 .mt-frame.mt-even {
-  background: var(--bg-soft);
+  background: var(--glass-soft);
 }
 .mt-head {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 6px;
-  font-size: 12px;
-  color: var(--text-2);
+  padding: 0 8px;
+  font-size: 11.5px;
+  color: var(--text-3);
   white-space: nowrap;
+  letter-spacing: 0.1px;
 }
 .mt-head .mt-name {
   font-weight: 650;
   color: var(--text);
 }
+/* A tile: its kind's color with a soft light from the top-left, a fine highlight on the top edge,
+   and a glow of its own color when pointed at. */
 .mt-leaf {
-  padding: 4px 6px;
+  padding: 5px 7px;
   font-size: 12px;
-  transition: opacity 0.15s, filter 0.12s;
+  background-color: var(--c);
+  background-image: linear-gradient(155deg, rgba(255, 255, 255, 0.3) 0%, rgba(255, 255, 255, 0) 50%, rgba(0, 0, 0, 0.12) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.38),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  transition: opacity 0.15s, filter 0.15s, box-shadow 0.15s;
 }
 .mt-leaf:hover {
-  filter: brightness(1.08) saturate(1.05);
+  filter: brightness(1.06) saturate(1.08);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    0 6px 18px -8px var(--c);
+  z-index: 3;
 }
 .mt-label {
   display: flex;
@@ -1365,17 +1402,20 @@ button {
 }
 .mt-leaf .mt-name {
   font-weight: 650;
+  font-size: 12.5px;
+  letter-spacing: 0.1px;
 }
 .mt-size {
-  opacity: 0.85;
+  opacity: 0.78;
   white-space: nowrap;
+  font-size: 11.5px;
 }
 /* A folder's small files and folders, lumped: hatched, so it does not read as one big file. */
 .mt-rest::after {
   content: "";
   position: absolute;
   inset: 0;
-  background: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.32) 0 2px, transparent 2px 7px);
+  background: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.26) 0 1.5px, transparent 1.5px 6px);
   pointer-events: none;
 }
 .mt-denied {
@@ -1384,18 +1424,79 @@ button {
 }
 .mt-mix {
   position: absolute;
-  left: 4px;
-  right: 4px;
-  bottom: 4px;
+  left: 6px;
+  right: 6px;
+  bottom: 6px;
   height: 4px;
   display: flex;
-  gap: 1px;
-  border-radius: 2px;
+  gap: 2px;
+  border-radius: 99px;
   overflow: hidden;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55);
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.7);
 }
 .mt-mix span {
   min-width: 2px;
+}
+@media (prefers-color-scheme: dark) {
+  .mt-frame {
+    box-shadow:
+      inset 0 0 0 1px var(--border),
+      inset 0 1px 0 var(--glass-edge);
+  }
+  .mt-leaf {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.22),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+  }
+  .mt-selected {
+    box-shadow:
+      inset 0 0 0 2px var(--bg),
+      0 0 0 2px var(--accent),
+      0 8px 24px -6px var(--accent-glow);
+  }
+}
+/* While a scan runs: tiles glide to their new sizes, and folders still being walked breathe. */
+.spacemap-live .mt {
+  transition: left 0.7s ease, top 0.7s ease, width 0.7s ease, height 0.7s ease, background 0.7s ease;
+}
+.mt-scanning {
+  animation: breathe 1.6s ease-in-out infinite;
+}
+@keyframes breathe {
+  50% {
+    filter: brightness(1.12) saturate(1.1);
+  }
+}
+.live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 0 var(--accent);
+  animation: live-ping 1.4s ease-out infinite;
+}
+@keyframes live-ping {
+  0% {
+    box-shadow: 0 0 0 0 var(--accent-glow);
+  }
+  100% {
+    box-shadow: 0 0 0 8px transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spacemap-live .mt,
+  .mt-scanning,
+  .live-dot {
+    transition: none;
+    animation: none;
+  }
 }
 .mt-faded {
   opacity: 0.22;
@@ -1408,18 +1509,23 @@ button {
   color: var(--text);
 }
 .mt-selected {
-  box-shadow: inset 0 0 0 2px var(--accent), 0 0 0 2px var(--accent);
-  z-index: 2;
+  box-shadow:
+    inset 0 0 0 2px #fff,
+    0 0 0 2px var(--accent),
+    0 8px 24px -6px var(--accent-glow);
+  z-index: 4;
 }
 .map-tip {
   position: absolute;
   left: 0;
   top: 0;
   z-index: 10;
+  min-width: 220px;
   max-width: 320px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: var(--bg-elev);
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--glass-strong);
+  backdrop-filter: blur(18px) saturate(1.4);
   border: 1px solid var(--border);
   box-shadow: var(--shadow-lg);
   font-size: 12.5px;
@@ -1452,9 +1558,28 @@ button {
 }
 .tip-kind {
   display: grid;
-  grid-template-columns: 10px 1fr auto;
+  grid-template-columns: 8px 1fr 64px 36px;
   gap: 8px;
   align-items: center;
+}
+.tip-kind .swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.tip-kind .num {
+  text-align: right;
+}
+.tip-kind-bar {
+  height: 4px;
+  border-radius: 99px;
+  background: var(--bg-soft);
+  overflow: hidden;
+}
+.tip-kind-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 99px;
 }
 .map-foot {
   display: flex;
@@ -1474,10 +1599,15 @@ button {
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-2);
-  padding: 3px 8px;
-  border-radius: 8px;
+  padding: 3px 10px 3px 8px;
+  border-radius: 99px;
   font-size: 12.5px;
   cursor: pointer;
+}
+.legend-chip .swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
 }
 .legend-chip:hover {
   background: var(--bg-soft);
@@ -1561,16 +1691,16 @@ button {
   white-space: nowrap;
 }
 .tt-bar {
-  height: 3px;
-  margin-top: 4px;
-  border-radius: 2px;
+  height: 4px;
+  margin-top: 5px;
+  border-radius: 99px;
   background: var(--bg-soft);
   overflow: hidden;
 }
 .tt-bar span {
   display: block;
   height: 100%;
-  border-radius: 2px;
+  border-radius: 99px;
 }
 .tt-size {
   font-size: 13px;

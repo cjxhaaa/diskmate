@@ -51,6 +51,8 @@ export interface TreeItem {
   /** Bytes by kind of file (src/filetypes.ts). */
   types: number[];
   hasChildren: boolean;
+  /** Still being scanned (only in the map drawn while a scan runs). */
+  live?: boolean;
   children?: TreeItem[];
 }
 
@@ -401,6 +403,8 @@ export const api = {
     call<TreeItem>("get_tree", { path, depth, minShare, limit }),
   /** The last saved scan of `root`, made current; null when there is none. */
   restoreScan: (root: string) => call<ScanSummary | null>("restore_scan", { root }),
+  /** The scan of `root` running now, as far as it has got; null when there is none to follow. */
+  scanLive: (root: string) => call<TreeItem | null>("scan_live", { root }),
   pathActions: (path: string) => call<PathActions>("path_actions", { path }),
   forgetPaths: (paths: string[]) => call<void>("forget_paths", { paths }),
   searchScan: (root: string, query: SearchQuery) => call<Hit[]>("search_scan", { root, query }),

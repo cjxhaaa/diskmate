@@ -1,12 +1,11 @@
 /**
  * The kinds of file the space map colors by, in the backend's order (src-tauri/src/filetype.rs).
  *
- * The eight hues are a validated categorical palette, in its fixed order (checked for color-blind
- * separation and in both themes); the order of the kinds below decides which kind gets which
- * slot, so the commonest kinds on a system drive get the most distinct colors. "System" and
- * "other" are neutral grays: they are the background against which the rest should stand out.
- * Tile labels pick dark or light ink per color, since three of the light hues are too pale for
- * white text.
+ * The eight hues (styles.css, `--kind-N`) are Apple's system colors around DiskMate's own
+ * blue-violet, which programs get. They were stepped per theme and checked as a set with the
+ * data-viz palette validator: lightness band, chroma, color-blind and normal-vision separation, in
+ * light and in dark. "System" and "other" are Apple's grays: the background against which the rest
+ * should stand out. Tile labels pick dark or light ink per color for contrast.
  */
 export interface Kind {
   label: string;

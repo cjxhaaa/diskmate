@@ -269,6 +269,31 @@ function mockItem(path: string, size: number, depth: number, min: number, limit:
   return item;
 }
 
+/** How far the sample scan has got (0 before, 1 when done). */
+let mockScanFrac = 0;
+
+/** The sample drive as a scan `frac` of the way through would see it: folders fill in one after
+ *  another (in a steady order of their own), the ones not yet finished marked live. */
+function liveSample(frac: number): import("./api").TreeItem {
+  const grow = (it: import("./api").TreeItem): import("./api").TreeItem => {
+    const start = (hash(it.path + it.name) % 70) / 100;
+    const f = Math.max(0, Math.min(1, (frac - start) / 0.3));
+    const kids = it.children?.map(grow).filter((k) => k.size > 0);
+    return {
+      ...it,
+      size: it.size * f,
+      types: it.types.map((v) => v * f),
+      files: Math.round(it.files * f),
+      hasChildren: false,
+      live: f < 1,
+      kind: it.kind === "file" ? "dir" : it.kind,
+      children: kids,
+    };
+  };
+  const t = grow(getTree("C:\\", 3, 0.0005, 60));
+  return { ...t, size: t.children?.reduce((s, k) => s + k.size, 0) ?? 0, live: true };
+}
+
 function getTree(path: string, depth: number, minShare: number, limit: number) {
   const size = sizeOf(path);
   if (size === null) throw new Error(`扫描结果里没有 ${path}`);
@@ -485,9 +510,10 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
       ] as T;
     case "start_scan": {
       void (async () => {
-        const steps = 30;
+        const steps = 40;
         for (let i = 1; i <= steps; i++) {
-          await sleep(90);
+          mockScanFrac = i / steps;
+          await sleep(150);
           emit("scan-progress", {
             files: i * 41_000,
             dirs: i * 5_200,
@@ -517,6 +543,8 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
       return [] as T;
     case "can_fast_scan":
       return true as T;
+    case "scan_live":
+      return (mockScanFrac > 0 && mockScanFrac < 1 ? liveSample(mockScanFrac) : null) as T;
     case "get_tree":
       await sleep(40);
       return getTree(String(args?.path), Number(args?.depth), Number(args?.minShare), Number(args?.limit)) as T;

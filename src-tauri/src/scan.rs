@@ -104,6 +104,27 @@ pub struct ScanCtx {
     large: Mutex<Vec<LargeFile>>,
     seen_links: Mutex<std::collections::HashSet<u64>>,
     exts: Mutex<HashMap<String, (u64, u64)>>,
+    /// Running totals of the top folders while the walk is under way, for the space map to grow
+    /// as the scan goes (see [`ScanCtx::live_tree`]).
+    live: Mutex<Vec<std::sync::Arc<LiveDir>>>,
+}
+
+/// How many folder levels below the root get running totals during a scan: as many as the space
+/// map draws at once.
+const LIVE_DEPTH: usize = 3;
+
+/// One folder's totals so far, added to by every folder under it as each is listed.
+pub struct LiveDir {
+    /// Its place in [`ScanCtx::live`], for the folders under it to name as their parent.
+    index: usize,
+    path: String,
+    name: String,
+    parent: Option<usize>,
+    bytes: AtomicU64,
+    files: AtomicU64,
+    types: [AtomicU64; KINDS],
+    done: AtomicBool,
+    denied: AtomicBool,
 }
 
 #[derive(Serialize, Clone)]
@@ -135,6 +156,106 @@ impl ScanCtx {
             e.0 += bytes;
             e.1 += count;
         }
+    }
+
+    /// Starts running totals for a folder in the top levels, under `parent`.
+    fn live_dir(&self, path: &Path, name: &str, parent: Option<usize>) -> std::sync::Arc<LiveDir> {
+        let mut live = self.live.lock().unwrap();
+        let dir = std::sync::Arc::new(LiveDir {
+            index: live.len(),
+            path: display(path),
+            name: name.to_string(),
+            parent,
+            bytes: AtomicU64::new(0),
+            files: AtomicU64::new(0),
+            types: Default::default(),
+            done: AtomicBool::new(false),
+            denied: AtomicBool::new(false),
+        });
+        live.push(dir.clone());
+        dir
+    }
+
+    /// The scan so far as a tree for the space map: the top folders with what has been counted
+    /// in them yet, those still being walked marked `live`. Items under `min_share` of the root
+    /// are left out, as on the finished map. `None` before the walk starts (or for a fast scan,
+    /// which has no walk to follow).
+    pub fn live_tree(&self, min_share: f64, limit: usize) -> Option<TreeItem> {
+        let dirs: Vec<std::sync::Arc<LiveDir>> = self.live.lock().unwrap().clone();
+        let root = dirs.first()?;
+        let mut kids: HashMap<usize, Vec<usize>> = HashMap::new();
+        for (i, d) in dirs.iter().enumerate() {
+            if let Some(p) = d.parent {
+                kids.entry(p).or_default().push(i);
+            }
+        }
+        let min = (root.bytes.load(Ordering::Relaxed) as f64 * min_share) as u64;
+        fn item(d: &LiveDir) -> TreeItem {
+            let mut types = Types::default();
+            for (t, a) in types.iter_mut().zip(&d.types) {
+                *t = a.load(Ordering::Relaxed);
+            }
+            TreeItem {
+                name: d.name.clone(),
+                path: d.path.clone(),
+                kind: ItemKind::Dir,
+                size: d.bytes.load(Ordering::Relaxed),
+                files: d.files.load(Ordering::Relaxed),
+                modified: 0,
+                denied: d.denied.load(Ordering::Relaxed),
+                types,
+                has_children: false,
+                live: !d.done.load(Ordering::Relaxed),
+                children: None,
+            }
+        }
+        fn build(
+            i: usize,
+            dirs: &[std::sync::Arc<LiveDir>],
+            kids: &HashMap<usize, Vec<usize>>,
+            min: u64,
+            limit: usize,
+        ) -> TreeItem {
+            let mut it = item(&dirs[i]);
+            let mut list: Vec<TreeItem> = kids
+                .get(&i)
+                .map(|k| {
+                    k.iter()
+                        .filter(|&&c| dirs[c].bytes.load(Ordering::Relaxed) >= min.max(1))
+                        .map(|&c| build(c, dirs, kids, min, limit))
+                        .collect()
+                })
+                .unwrap_or_default();
+            list.sort_by(|a, b| b.size.cmp(&a.size));
+            list.truncate(limit);
+            // What is counted here but not in a subfolder shown: this folder's own files so far.
+            let shown: u64 = list.iter().map(|c| c.size).sum();
+            let rest = it.size.saturating_sub(shown);
+            if !list.is_empty() && rest >= min.max(1) {
+                let mut types = it.types;
+                for c in &list {
+                    sub_types(&mut types, &c.types);
+                }
+                list.push(TreeItem {
+                    name: "其他文件和小文件夹".into(),
+                    path: it.path.clone(),
+                    kind: ItemKind::Rest,
+                    size: rest,
+                    files: 0,
+                    modified: 0,
+                    denied: false,
+                    types,
+                    has_children: false,
+                    live: false,
+                    children: None,
+                });
+            }
+            if !list.is_empty() {
+                it.children = Some(list);
+            }
+            it
+        }
+        Some(build(0, &dirs, &kids, min, limit))
     }
 
     pub fn progress(&self) -> Progress {
@@ -191,6 +312,20 @@ fn fold_small(node: &mut Node) {
 }
 
 fn scan_dir(path: &Path, name: String, ctx: &ScanCtx, vol: &Volume, all_links: bool) -> Node {
+    scan_dir_at(path, name, ctx, vol, all_links, 0, &[])
+}
+
+/// [`scan_dir`] `depth` levels below the root; `chain` holds the running totals of the folders
+/// above it that have them (the top [`LIVE_DEPTH`] levels), which its files are added to.
+fn scan_dir_at(
+    path: &Path,
+    name: String,
+    ctx: &ScanCtx,
+    vol: &Volume,
+    all_links: bool,
+    depth: usize,
+    chain: &[std::sync::Arc<LiveDir>],
+) -> Node {
     let mut node = Node {
         name,
         ..Default::default()
@@ -198,6 +333,10 @@ fn scan_dir(path: &Path, name: String, ctx: &ScanCtx, vol: &Volume, all_links: b
     if ctx.cancel.load(Ordering::Relaxed) {
         return node;
     }
+    // The top levels get running totals of their own, for the map drawn while scanning.
+    let mine = (depth <= LIVE_DEPTH)
+        .then(|| ctx.live_dir(path, &node.name, chain.last().map(|p| p.index)));
+    let chain: Vec<std::sync::Arc<LiveDir>> = chain.iter().cloned().chain(mine.clone()).collect();
     let dirs_seen = ctx.dirs.fetch_add(1, Ordering::Relaxed);
     if dirs_seen.is_multiple_of(97) {
         *ctx.current.lock().unwrap() = display(path);
@@ -207,6 +346,10 @@ fn scan_dir(path: &Path, name: String, ctx: &ScanCtx, vol: &Volume, all_links: b
         Err(_) => {
             node.denied = true;
             ctx.denied.fetch_add(1, Ordering::Relaxed);
+            if let Some(m) = &mine {
+                m.denied.store(true, Ordering::Relaxed);
+                m.done.store(true, Ordering::Relaxed);
+            }
             return node;
         }
     };
@@ -254,12 +397,31 @@ fn scan_dir(path: &Path, name: String, ctx: &ScanCtx, vol: &Volume, all_links: b
     finish_files(&mut node);
     ctx.files.fetch_add(node.files, Ordering::Relaxed);
     ctx.bytes.fetch_add(node.own, Ordering::Relaxed);
+    if node.files > 0 {
+        for d in &chain {
+            d.bytes.fetch_add(node.own, Ordering::Relaxed);
+            d.files.fetch_add(node.files, Ordering::Relaxed);
+            for (t, &v) in d.types.iter().zip(&node.types) {
+                if v > 0 {
+                    t.fetch_add(v, Ordering::Relaxed);
+                }
+            }
+        }
+    }
     let scan_all = |dirs: Vec<std::ffi::OsString>| -> Vec<Node> {
         dirs.into_par_iter()
             .map(|n| {
                 let p = path.join(&n);
                 let links = all_links || p.as_os_str().eq_ignore_ascii_case(&vol.system_root);
-                scan_dir(&p, n.to_string_lossy().into_owned(), ctx, vol, links)
+                scan_dir_at(
+                    &p,
+                    n.to_string_lossy().into_owned(),
+                    ctx,
+                    vol,
+                    links,
+                    depth + 1,
+                    &chain,
+                )
             })
             .collect()
     };
@@ -277,6 +439,9 @@ fn scan_dir(path: &Path, name: String, ctx: &ScanCtx, vol: &Volume, all_links: b
         node.children = scan_all(subdirs);
     }
     finish_dir(&mut node);
+    if let Some(m) = &mine {
+        m.done.store(true, Ordering::Relaxed);
+    }
     node
 }
 
@@ -611,6 +776,9 @@ pub struct TreeItem {
     /// Bytes by kind of file (a file has all of its size under one kind).
     pub types: Types,
     pub has_children: bool,
+    /// Still being scanned (only in the tree drawn while a scan runs).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub live: bool,
     /// Present down to the depth asked for.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub children: Option<Vec<TreeItem>>,
@@ -627,6 +795,7 @@ fn dir_item(node: &Node, path: String) -> TreeItem {
         denied: node.denied,
         types: node.types,
         has_children: !node.children.is_empty() || node.own > 0 || node.small > 0,
+        live: false,
         children: None,
     }
 }
@@ -681,6 +850,7 @@ fn build(node: &Node, path: String, depth: u32, min: u64, limit: usize) -> TreeI
                 denied: false,
                 types: one_type(f.kind, f.size),
                 has_children: false,
+                live: false,
                 children: None,
             });
         }
@@ -703,6 +873,7 @@ fn build(node: &Node, path: String, depth: u32, min: u64, limit: usize) -> TreeI
             denied: false,
             types: rest_types,
             has_children: false,
+            live: false,
             children: None,
         });
     }
@@ -1231,6 +1402,32 @@ mod tests {
         let exts = ext_stats(std::mem::take(&mut *ctx.exts.lock().unwrap()));
         assert_eq!(exts[0].ext, "bin");
         assert_eq!(exts[0].bytes, 1010);
+    }
+
+    #[test]
+    fn running_totals_match_the_finished_scan() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("a/b/c/d")).unwrap();
+        std::fs::write(dir.path().join("a/one.mp4"), vec![0u8; 1000]).unwrap();
+        std::fs::write(dir.path().join("a/b/c/d/deep.bin"), vec![0u8; 500]).unwrap();
+        std::fs::write(dir.path().join("top.bin"), vec![0u8; 10]).unwrap();
+        let ctx = ScanCtx::default();
+        let vol = Volume {
+            ntfs: crate::util::is_ntfs(dir.path()),
+            system_root: system_root(),
+        };
+        let tree = scan_dir(dir.path(), "root".into(), &ctx, &vol, false);
+        let live = ctx.live_tree(0.0, 100).unwrap();
+        assert_eq!(live.size, tree.size);
+        assert_eq!(live.files, 3);
+        assert!(!live.live, "the walk is over");
+        let kids = live.children.unwrap();
+        let a = kids.iter().find(|k| k.name == "a").unwrap();
+        // Files four levels down still count in the folders above them.
+        assert_eq!(a.size, 1500);
+        assert_eq!(a.types[crate::filetype::VIDEO as usize], 1000);
+        let rest = kids.iter().find(|k| k.kind == ItemKind::Rest).unwrap();
+        assert_eq!(rest.size, 10);
     }
 
     #[test]

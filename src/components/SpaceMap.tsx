@@ -110,6 +110,8 @@ function layout(item: TreeItem, box: Rect, depth: number, out: Tile[]) {
 
 interface Props {
   root: TreeItem;
+  /** Drawn while a scan runs: tiles glide to their new sizes as the totals grow. */
+  live?: boolean;
   /** Key ([`itemKey`]) of the item hovered in the list beside the map. */
   hovered: string | null;
   selected: string | null;
@@ -128,7 +130,7 @@ interface Props {
  * strip showing the mix. Big files are tiles of their own; a folder's small files and folders are
  * one hatched tile. Click a folder to go into it; right-click anything for what can be done.
  */
-export function SpaceMap({ root, hovered, selected, kind, onHover, onOpen, onSelect, onMenu }: Props) {
+export function SpaceMap({ root, live, hovered, selected, kind, onHover, onOpen, onSelect, onMenu }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const tipRef = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState({ w: 0, h: 0 });
@@ -156,9 +158,13 @@ export function SpaceMap({ root, hovered, selected, kind, onHover, onOpen, onSel
     const r = map.getBoundingClientRect();
     const x = e.clientX - r.left;
     const y = e.clientY - r.top;
-    const flipX = x + el.offsetWidth + 18 > r.width;
-    const flipY = y + el.offsetHeight + 18 > r.height;
-    el.style.transform = `translate(${flipX ? x - el.offsetWidth - 12 : x + 14}px, ${flipY ? y - el.offsetHeight - 12 : y + 14}px)`;
+    // Right after the pointer enters a tile the tooltip may not hold its new content yet: reserve
+    // room for its full size, so it flips away from an edge instead of being cut off by it.
+    const w = Math.max(el.offsetWidth, 320);
+    const h = Math.max(el.offsetHeight, 190);
+    const flipX = x + w + 18 > r.width;
+    const flipY = y + h + 18 > r.height;
+    el.style.transform = `translate(${flipX ? Math.max(4, x - el.offsetWidth - 12) : x + 14}px, ${flipY ? Math.max(4, y - el.offsetHeight - 12) : y + 14}px)`;
   };
 
   const enter = (item: TreeItem | null) => {
@@ -168,7 +174,7 @@ export function SpaceMap({ root, hovered, selected, kind, onHover, onOpen, onSel
 
   return (
     <div
-      className="spacemap"
+      className={`spacemap ${live ? "spacemap-live" : ""}`}
       ref={ref}
       onMouseMove={place}
       onMouseLeave={() => enter(null)}
@@ -212,6 +218,7 @@ const Tiles = memo(function Tiles({ tiles, hovered, selected, kind, onEnter, onO
           selected === key ? "mt-selected" : "",
           !t.frame && kind !== null && dom !== kind ? "mt-faded" : "",
           canOpen ? "mt-open" : "",
+          item.live ? "mt-scanning" : "",
         ].join(" ");
         const style: React.CSSProperties = {
           left: t.x + 1,
@@ -220,7 +227,7 @@ const Tiles = memo(function Tiles({ tiles, hovered, selected, kind, onEnter, onO
           height: Math.max(0, t.h - 2),
         };
         if (!t.frame && !item.denied) {
-          style.background = kindColor(dom);
+          (style as Record<string, string | number>)["--c"] = kindColor(dom);
           style.color = kindInk(dom);
         }
         const label = t.frame ? t.head > 0 && t.w > 56 : t.w > 54 && t.h > 20;
@@ -293,6 +300,9 @@ export function TipBody({ item, total }: { item: TreeItem; total: number }) {
             <div key={k} className="tip-kind">
               <span className="swatch" style={{ background: kindColor(k) }} />
               <span>{KINDS[k].label}</span>
+              <span className="tip-kind-bar">
+                <span style={{ width: percent(v, item.size), background: kindColor(k) }} />
+              </span>
               <span className="num faint">{percent(v, item.size)}</span>
             </div>
           ))}
