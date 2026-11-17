@@ -186,7 +186,7 @@ export function Explorer() {
                 <div>
                   {current?.fromHistory ? `${driveName} 上次的扫描没有保存空间地图（旧版本扫描的），需要重新扫描一次` : `还没有扫描过 ${driveName}，扫描后可以在这里看到空间都用在了哪里`}
                   <div className="faint" style={{ fontSize: 13, marginTop: 4 }}>
-                    {scanning ? `正在扫描 ${scanning.root}，完成后才能开始下一个` : canFast ? "普通扫描一般一到三分钟；快速扫描直接读取主文件表，几秒就好，但需要管理员授权" : "整盘扫描一般一到三分钟，机械硬盘会久一些"}
+                    {scanning ? `正在扫描 ${scanning.root}，完成后才能开始下一个` : canFast ? "普通扫描一般一到三分钟；快速扫描直接读取主文件表，几秒就好，需要管理员授权，还能读到普通扫描没权限读的文件夹" : "整盘扫描一般一到三分钟，机械硬盘会久一些"}
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
@@ -300,7 +300,7 @@ function LiveMap({ tabs, root }: { tabs: React.ReactNode; root: string }) {
   );
 }
 
-const FAST_TIP = "直接读取 NTFS 的主文件表，通常几秒就能扫完整个盘；需要管理员权限，Windows 会先弹窗询问";
+const FAST_TIP = "直接读取 NTFS 的主文件表，通常几秒就能扫完整个盘；需要管理员权限，Windows 会先弹窗询问。它还能读到普通扫描没有权限读的文件夹（如 WindowsApps、System Volume Information），所以结果会大一些";
 
 interface MapTabProps {
   /** The tab switcher, drawn at the start of this tab's own toolbar row. */

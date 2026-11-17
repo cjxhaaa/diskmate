@@ -236,7 +236,7 @@ export function Scanning({ note }: { note?: string }) {
   );
 }
 
-const FAST_TIP = "直接读取 NTFS 的主文件表，通常几秒就能扫完整个盘；需要管理员权限，Windows 会先弹窗询问";
+const FAST_TIP = "直接读取 NTFS 的主文件表，通常几秒就能扫完整个盘；需要管理员权限，Windows 会先弹窗询问。它还能读到普通扫描没有权限读的文件夹（如 WindowsApps、System Volume Information），所以结果会大一些";
 
 /** "刚刚" / "12 分钟前" / "今天 09:41" / "10-14 16:02". */
 function scannedAgo(unixSecs: number): string {

@@ -15,7 +15,6 @@ use std::time::Instant;
 /// Files at least this big are listed on the large-files page.
 pub(crate) const LARGE_FILE_BYTES: u64 = 100 * 1024 * 1024;
 const LARGE_FILE_KEEP: usize = 500;
-const HARD_LINK_CHECK_BYTES: u64 = 8 * 1024 * 1024;
 /// Folders smaller than this are folded into their parent as soon as they are measured: the map
 /// never needs them one by one, and on a system drive they are most of the ~500k folders.
 const KEEP_FOLDER_BYTES: u64 = 1024 * 1024;
@@ -102,7 +101,9 @@ pub struct ScanCtx {
     pub cancel: AtomicBool,
     pub current: Mutex<String>,
     large: Mutex<Vec<LargeFile>>,
-    seen_links: Mutex<std::collections::HashSet<u64>>,
+    /// Ids of the files met so far, to count a file with several names (hard links) once; in
+    /// shards, so the walking threads rarely wait for each other.
+    seen_links: [Mutex<std::collections::HashSet<u64>>; LINK_SHARDS],
     exts: Mutex<HashMap<String, (u64, u64)>>,
     /// Running totals of the top folders while the walk is under way, for the space map to grow
     /// as the scan goes (see [`ScanCtx::live_tree`]).
@@ -110,6 +111,8 @@ pub struct ScanCtx {
     /// Bumped each time a fast scan replaces the running totals (see [`ScanCtx::set_live`]).
     pub live_version: AtomicU64,
 }
+
+const LINK_SHARDS: usize = 32;
 
 /// How many folder levels below the root get running totals during a scan: as many as the space
 /// map draws at once.
@@ -159,6 +162,14 @@ impl ScanCtx {
             size,
             modified,
         });
+    }
+
+    /// Whether this is the first name met of the file with id `id`.
+    fn first_sight(&self, id: u64) -> bool {
+        self.seen_links[(id % LINK_SHARDS as u64) as usize]
+            .lock()
+            .unwrap()
+            .insert(id)
     }
 
     pub(crate) fn add_exts(&self, exts: HashMap<String, (u64, u64)>) {
@@ -328,8 +339,7 @@ impl ScanCtx {
 struct Volume {
     /// Hard links can be recognised by file id (see [`crate::util::is_ntfs`]).
     ntfs: bool,
-    /// `C:\Windows`: WinSxS hard-links most of System32, Servicing and the driver store, so here
-    /// every file is checked, not just big ones.
+    /// `C:\Windows`, where WinSxS hard-links most of System32, Servicing and the driver store.
     system_root: PathBuf,
 }
 
@@ -367,8 +377,8 @@ fn fold_small(node: &mut Node) {
     node.children.shrink_to_fit();
 }
 
-fn scan_dir(path: &Path, name: String, ctx: &ScanCtx, vol: &Volume, all_links: bool) -> Node {
-    scan_dir_at(path, name, ctx, vol, all_links, 0, &[])
+fn scan_dir(path: &Path, name: String, ctx: &ScanCtx, vol: &Volume) -> Node {
+    scan_dir_at(path, name, ctx, vol, 0, &[])
 }
 
 /// [`scan_dir`] `depth` levels below the root; `chain` holds the running totals of the folders
@@ -378,7 +388,6 @@ fn scan_dir_at(
     name: String,
     ctx: &ScanCtx,
     vol: &Volume,
-    all_links: bool,
     depth: usize,
     chain: &[std::sync::Arc<LiveDir>],
 ) -> Node {
@@ -422,19 +431,12 @@ fn scan_dir_at(
         let len = entry_on_disk_len(path, &entry);
         files.push((entry, len));
     }
-    // A file reachable under two names (a hard link) is one file on disk: only the first name the
-    // scan meets counts it. Remembering ids costs memory, so outside the Windows folder only files
-    // big enough to skew the totals are remembered.
+    // A file reachable under several names (a hard link) is one file on disk: only the first name
+    // the scan meets counts it, as in the fast scan. The listing gives each file's id but not how
+    // many names it has, so every id is remembered while walking: some 40 MB for a system drive of
+    // a few million files, let go when the walk ends.
     if vol.ntfs {
-        let mut seen = None;
-        for (entry, len) in files.iter_mut() {
-            if entry.file_id != 0 && (all_links || *len >= HARD_LINK_CHECK_BYTES) {
-                let seen = seen.get_or_insert_with(|| ctx.seen_links.lock().unwrap());
-                if !seen.insert(entry.file_id) {
-                    *len = 0;
-                }
-            }
-        }
+        files.retain(|(entry, _)| entry.file_id == 0 || ctx.first_sight(entry.file_id));
     }
     let mut exts: HashMap<String, (u64, u64)> = HashMap::new();
     for (entry, len) in files {
@@ -467,14 +469,11 @@ fn scan_dir_at(
     let scan_all = |dirs: Vec<std::ffi::OsString>| -> Vec<Node> {
         dirs.into_par_iter()
             .map(|n| {
-                let p = path.join(&n);
-                let links = all_links || p.as_os_str().eq_ignore_ascii_case(&vol.system_root);
                 scan_dir_at(
-                    &p,
+                    &path.join(&n),
                     n.to_string_lossy().into_owned(),
                     ctx,
                     vol,
-                    links,
                     depth + 1,
                     &chain,
                 )
@@ -587,10 +586,11 @@ pub fn run(root: &Path, ctx: &ScanCtx) -> ScanData {
         ntfs: crate::util::is_ntfs(root),
         system_root: system_root(),
     };
-    let at_system_root = root.as_os_str().eq_ignore_ascii_case(&vol.system_root);
-    let tree = scan_dir(root, display(root), ctx, &vol, at_system_root);
-    // The ids were only needed while walking; on a system drive they are a few hundred thousand.
-    *ctx.seen_links.lock().unwrap() = Default::default();
+    let tree = scan_dir(root, display(root), ctx, &vol);
+    // The ids were only needed while walking; on a system drive they are a few million.
+    for shard in &ctx.seen_links {
+        *shard.lock().unwrap() = Default::default();
+    }
     finish(root, tree, ctx, started)
 }
 
@@ -1446,7 +1446,7 @@ mod tests {
             ntfs: crate::util::is_ntfs(dir.path()),
             system_root: system_root(),
         };
-        let tree = scan_dir(dir.path(), "root".into(), &ctx, &vol, false);
+        let tree = scan_dir(dir.path(), "root".into(), &ctx, &vol);
         assert_eq!(tree.size, 1510);
         assert_eq!(tree.files, 3);
         assert_eq!(tree.own, 10);
@@ -1472,7 +1472,7 @@ mod tests {
             ntfs: crate::util::is_ntfs(dir.path()),
             system_root: system_root(),
         };
-        let tree = scan_dir(dir.path(), "root".into(), &ctx, &vol, false);
+        let tree = scan_dir(dir.path(), "root".into(), &ctx, &vol);
         let live = ctx.live_tree(0.0, 100).unwrap();
         assert_eq!(live.size, tree.size);
         assert_eq!(live.files, 3);
@@ -1495,13 +1495,14 @@ mod tests {
             ntfs: crate::util::is_ntfs(dir.path()),
             system_root: system_root(),
         };
-        let tree = scan_dir(dir.path(), "root".into(), &ScanCtx::default(), &vol, false);
+        let tree = scan_dir(dir.path(), "root".into(), &ScanCtx::default(), &vol);
         assert_eq!(tree.children.len(), 1);
         assert_eq!(tree.children[0].top[0].name, "big.iso");
         assert_eq!(tree.children[0].top[0].kind, crate::filetype::DISK);
     }
 
-    /// The WinSxS case: one small file under two names counts once.
+    /// One small file under two names counts once, as one file, wherever it is (WinSxS, cargo's
+    /// target folder, pnpm's store).
     #[test]
     fn hard_links_count_once() {
         let dir = tempfile::tempdir().unwrap();
@@ -1520,12 +1521,8 @@ mod tests {
             ntfs: true,
             system_root: system_root(),
         };
-        // Small files are only checked inside the Windows folder: here, every folder is treated so.
-        let tree = scan_dir(dir.path(), "root".into(), &ScanCtx::default(), &vol, true);
+        let tree = scan_dir(dir.path(), "root".into(), &ScanCtx::default(), &vol);
         assert_eq!(tree.size, 4000);
-        assert_eq!(tree.files, 2);
-        // Elsewhere, a small hard link is not worth remembering and still counts twice.
-        let tree = scan_dir(dir.path(), "root".into(), &ScanCtx::default(), &vol, false);
-        assert_eq!(tree.size, 8000);
+        assert_eq!(tree.files, 1);
     }
 }
