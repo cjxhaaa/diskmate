@@ -10,13 +10,13 @@
 //! folders the normal scan may not enter (System Volume Information) are counted, and every hard
 //! link counts once, not only big ones.
 
-use crate::scan::{self, Node, ScanCtx, ScanData};
+use crate::scan::{self, LiveSnap, Node, ScanCtx, ScanData};
 use crate::util::display;
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 pub const MFT_ARG: &str = "--mft-scan";
 
@@ -32,8 +32,12 @@ const ATTR_DATA: u32 = 0x80;
 const ATTR_END: u32 = 0xFFFF_FFFF;
 
 const REPARSE_POINT: u32 = 0x400;
-/// A cloud file whose contents are not on this disk (matches util::disk_len).
-const CLOUD_ONLY: u32 = 0x1000 | 0x40000 | 0x400000;
+/// A cloud file whose contents are not on this disk: offline, or recalled on data access (as in
+/// util::disk_len). Not 0x40000: Windows reports it as "recall on open", but in the table it is
+/// NTFS's "has extended attributes" flag, which Smart App Control and code integrity set on many
+/// programs and DLLs (`$KERNEL.SMARTLOCKER.ORIGINCLAIM`, `$KERNEL.PURGE.ESBCACHE`). Reading it as
+/// a cloud file counted those as empty.
+const CLOUD_ONLY: u32 = 0x1000 | 0x400000;
 /// $DATA attribute flags: compressed, sparse.
 const DATA_COMPRESSED: u16 = 0x0001;
 const DATA_SPARSE: u16 = 0x8000;
@@ -389,6 +393,11 @@ pub fn scan(root: &Path, ctx: &ScanCtx) -> Result<ScanData, String> {
     let mut carry: Vec<u8> = Vec::with_capacity(b.record);
     let mut no = 0u64;
     let mut left = table_bytes;
+    // Every moment, the top folders with what has been read of them so far, for the map to grow
+    // as the table is read. Each look costs more as the table fills in, so it comes less often
+    // when slow: looking takes at most a tenth of the time, the reading stays the priority.
+    let mut looked = Instant::now();
+    let mut every = Duration::from_millis(600);
     'runs: for (lcn, clusters) in runs {
         let mut run_bytes = (clusters * b.cluster).min(left);
         let Some(lcn) = lcn else {
@@ -426,6 +435,12 @@ pub fn scan(root: &Path, ctx: &ScanCtx) -> Result<ScanData, String> {
             }
             carry.extend_from_slice(&data[whole..]);
             *ctx.current.lock().unwrap() = format!("正在读取主文件表 {}%", no * 100 / total.max(1));
+            if looked.elapsed() >= every {
+                let t = Instant::now();
+                ctx.set_live(live_snaps(&g, &drive));
+                every = Duration::from_millis(600).max(t.elapsed() * 9);
+                looked = Instant::now();
+            }
         }
     }
 
@@ -471,6 +486,80 @@ fn record(g: &mut Gathered, ctx: &ScanCtx, no: u64, rec: &mut [u8], sector: usiz
         return;
     }
     g.take(ctx, no, r);
+}
+
+/// The top [`scan::LIVE_DEPTH`] levels of folders found so far, each with the bytes of the files
+/// read so far anywhere under it. A folder whose way up to the root has not been read yet waits
+/// for a later look; files with several names wait for the end, where they are placed.
+fn live_snaps(g: &Gathered, drive: &str) -> Vec<LiveSnap> {
+    /// The way up to the root is not known (yet).
+    const UNKNOWN: i64 = -1;
+    /// Under a junction or $Extend: not counted, as in the finished scan.
+    const SKIP: i64 = -2;
+    let mut snaps = vec![LiveSnap {
+        path: drive.to_string(),
+        name: drive.to_string(),
+        ..Default::default()
+    }];
+    // Each folder's depth and the top folder (place in `snaps`) its files count toward.
+    let mut memo: HashMap<u64, (usize, i64)> = HashMap::with_capacity(g.dirs.len());
+    memo.insert(ROOT, (0, 0));
+    let mut chain = Vec::new();
+    let mut slot_of = |start: u64, snaps: &mut Vec<LiveSnap>| -> i64 {
+        chain.clear();
+        let mut d = start;
+        let (mut depth, mut slot) = loop {
+            if let Some(&m) = memo.get(&d) {
+                break m;
+            }
+            let Some(x) = g.dirs.get(&d) else {
+                break (0, UNKNOWN);
+            };
+            if chain.len() > 512 {
+                break (0, UNKNOWN);
+            }
+            chain.push(d);
+            d = x.parent;
+        };
+        while let Some(c) = chain.pop() {
+            let x = &g.dirs[&c];
+            depth += 1;
+            if slot >= 0 {
+                if x.reparse || c == EXTEND {
+                    slot = SKIP;
+                } else if depth <= scan::LIVE_DEPTH {
+                    let parent = slot as usize;
+                    let path = display(&PathBuf::from(&snaps[parent].path).join(&x.name));
+                    snaps.push(LiveSnap {
+                        path,
+                        name: x.name.clone(),
+                        parent: Some(parent),
+                        ..Default::default()
+                    });
+                    slot = (snaps.len() - 1) as i64;
+                }
+            }
+            memo.insert(c, (depth, slot));
+        }
+        slot
+    };
+    for (&dir, node) in &g.own {
+        let slot = slot_of(dir, &mut snaps);
+        if slot < 0 {
+            continue;
+        }
+        let mut at = Some(slot as usize);
+        while let Some(i) = at {
+            let s = &mut snaps[i];
+            s.bytes += node.own;
+            s.files += node.files;
+            for (a, b) in s.types.iter_mut().zip(&node.types) {
+                *a += b;
+            }
+            at = s.parent;
+        }
+    }
+    snaps
 }
 
 /// Turns the gathered folders and files into the scan's tree, rooted at the volume's root.
@@ -632,6 +721,10 @@ pub fn elevated() -> bool {
 struct Files {
     out: PathBuf,
     progress: PathBuf,
+    /// The latest [`live_snaps`], for the map drawn while scanning; written beside and renamed
+    /// over, so it is never read half written.
+    live: PathBuf,
+    live_tmp: PathBuf,
     cancel: PathBuf,
     error: PathBuf,
 }
@@ -641,12 +734,21 @@ impl Files {
         Files {
             out: out.to_path_buf(),
             progress: out.with_extension("progress"),
+            live: out.with_extension("live"),
+            live_tmp: out.with_extension("live-tmp"),
             cancel: out.with_extension("cancel"),
             error: out.with_extension("error"),
         }
     }
     fn clear(&self) {
-        for p in [&self.out, &self.progress, &self.cancel, &self.error] {
+        for p in [
+            &self.out,
+            &self.progress,
+            &self.live,
+            &self.live_tmp,
+            &self.cancel,
+            &self.error,
+        ] {
             let _ = std::fs::remove_file(p);
         }
     }
@@ -669,8 +771,19 @@ pub fn helper(letter: &str, out: &Path) -> i32 {
     {
         let (ctx, done) = (ctx.clone(), done.clone());
         let (progress, cancel) = (files.progress.clone(), files.cancel.clone());
+        let (live, live_tmp) = (files.live.clone(), files.live_tmp.clone());
         std::thread::spawn(move || {
+            let mut sent = 0;
             while !done.load(Ordering::Relaxed) {
+                let version = ctx.live_version.load(Ordering::Relaxed);
+                if version != sent {
+                    sent = version;
+                    if let Ok(s) = serde_json::to_vec(&ctx.live_snaps()) {
+                        if std::fs::write(&live_tmp, s).is_ok() {
+                            let _ = std::fs::rename(&live_tmp, &live);
+                        }
+                    }
+                }
                 let p = HelperProgress {
                     files: ctx.files.load(Ordering::Relaxed),
                     bytes: ctx.bytes.load(Ordering::Relaxed),
@@ -747,8 +860,21 @@ pub fn run(root: &Path, ctx: &ScanCtx, work: &Path) -> Result<ScanData, String> 
     }
     let process = info.hProcess;
     let mut cancel_sent = false;
+    let mut live_seen = None;
     loop {
         let waited = unsafe { WaitForSingleObject(process, 150) };
+        let changed = std::fs::metadata(&files.live)
+            .and_then(|m| m.modified())
+            .ok();
+        if changed.is_some() && changed != live_seen {
+            if let Some(snaps) = std::fs::read(&files.live)
+                .ok()
+                .and_then(|s| serde_json::from_slice::<Vec<LiveSnap>>(&s).ok())
+            {
+                live_seen = changed;
+                ctx.set_live(snaps);
+            }
+        }
         if let Ok(s) = std::fs::read(&files.progress) {
             if let Ok(p) = serde_json::from_slice::<HelperProgress>(&s) {
                 ctx.files.store(p.files, Ordering::Relaxed);
@@ -781,6 +907,56 @@ pub fn run(root: &Path, ctx: &ScanCtx, work: &Path) -> Result<ScanData, String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn live_snaps_sum_the_top_folders() {
+        let mut g = Gathered::default();
+        let dir = |parent, name: &str| Dir {
+            parent,
+            name: name.into(),
+            reparse: false,
+        };
+        // C:\a\b\c\d (d is one level too deep to get totals of its own), a junction at
+        // C:\link, and a folder whose parent has not been read yet.
+        g.dirs.insert(ROOT, dir(ROOT, ""));
+        g.dirs.insert(20, dir(ROOT, "a"));
+        g.dirs.insert(21, dir(20, "b"));
+        g.dirs.insert(22, dir(21, "c"));
+        g.dirs.insert(23, dir(22, "d"));
+        g.dirs.insert(
+            24,
+            Dir {
+                reparse: true,
+                ..dir(ROOT, "link")
+            },
+        );
+        g.dirs.insert(25, dir(99, "orphan"));
+        let ctx = ScanCtx::default();
+        g.add(&ctx, ROOT, "pagefile.sys", 100, 0);
+        g.add(&ctx, 23, "movie.mp4", 40, 0);
+        g.add(&ctx, 21, "notes.txt", 2, 0);
+        g.add(&ctx, 24, "far.bin", 1000, 0);
+        g.add(&ctx, 25, "lost.bin", 1000, 0);
+
+        let snaps = live_snaps(&g, r"C:\");
+        let at = |path: &str| snaps.iter().position(|s| s.path == path);
+        let by = |path: &str| &snaps[at(path).unwrap()];
+        assert_eq!(by(r"C:\").bytes, 142);
+        assert_eq!(by(r"C:\a").bytes, 42);
+        assert_eq!(by(r"C:\a\b").bytes, 42);
+        assert_eq!(by(r"C:\a\b").parent, at(r"C:\a"));
+        assert_eq!(by(r"C:\a\b\c").files, 1);
+        assert_eq!(by(r"C:\a\b\c").types[crate::filetype::VIDEO as usize], 40);
+        assert_eq!(snaps.len(), 4, "no d, junction or orphan");
+
+        // Through the context, as the map reads it: C:\a, then the root's own files.
+        ctx.set_live(snaps);
+        let tree = ctx.live_tree(0.0, 60).unwrap();
+        assert_eq!(tree.size, 142);
+        let kids = tree.children.unwrap();
+        assert_eq!((kids[0].name.as_str(), kids[0].size), ("a", 42));
+        assert_eq!(kids[1].size, 100);
+    }
 
     #[test]
     fn data_runs_decode() {

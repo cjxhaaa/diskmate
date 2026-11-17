@@ -105,9 +105,8 @@ export function Explorer() {
   const actions = useItemActions(changed, (t) => (!t.lumped && (t.isDir || tab !== "map") ? [openEntry(() => show(t), t.isDir)] : []));
 
   const ready = !!root && !!path;
-  // While this drive is scanned the old map goes: a normal scan's map grows as it walks the disk;
-  // a fast scan has nothing to show until its few seconds are up.
-  const live = scanningHere && !scanning?.fast;
+  // While this drive is scanned the old map goes and a new one grows as the scan goes: a normal
+  // scan's as it walks the disk, a fast scan's as it reads the file table.
   const driveName = driveRoot.replace("\\", "");
   const shownTab: Tab = scanningHere ? "map" : tab;
   const tabs = (
@@ -164,19 +163,15 @@ export function Explorer() {
       {scanningHere && (
         <Scanning
           note={
-            live
-              ? "空间地图正跟着扫描实时生成；扫完后可以点进文件夹、查看文件类型。"
-              : "快速扫描读完主文件表就会显示空间地图，一般只要几秒。"
+            scanning?.fast
+              ? "空间地图正跟着读取主文件表实时生成；读完后可以点进文件夹、查看文件类型。"
+              : "空间地图正跟着扫描实时生成；扫完后可以点进文件夹、查看文件类型。"
           }
         />
       )}
 
       {scanningHere ? (
-        live ? (
-          <LiveMap tabs={tabs} root={driveRoot} />
-        ) : (
-          <div className="space-tabs-row">{tabs}</div>
-        )
+        <LiveMap tabs={tabs} root={driveRoot} />
       ) : !ready ? (
         <>
           <div className="space-tabs-row">{tabs}</div>

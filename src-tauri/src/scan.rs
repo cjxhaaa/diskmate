@@ -107,11 +107,13 @@ pub struct ScanCtx {
     /// Running totals of the top folders while the walk is under way, for the space map to grow
     /// as the scan goes (see [`ScanCtx::live_tree`]).
     live: Mutex<Vec<std::sync::Arc<LiveDir>>>,
+    /// Bumped each time a fast scan replaces the running totals (see [`ScanCtx::set_live`]).
+    pub live_version: AtomicU64,
 }
 
 /// How many folder levels below the root get running totals during a scan: as many as the space
 /// map draws at once.
-const LIVE_DEPTH: usize = 3;
+pub(crate) const LIVE_DEPTH: usize = 3;
 
 /// One folder's totals so far, added to by every folder under it as each is listed.
 pub struct LiveDir {
@@ -125,6 +127,19 @@ pub struct LiveDir {
     types: [AtomicU64; KINDS],
     done: AtomicBool,
     denied: AtomicBool,
+}
+
+/// One top folder's totals as a fast scan sees them so far: worked out afresh every moment from
+/// what has been read of the table, and passed on from the elevated helper as data.
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct LiveSnap {
+    pub path: String,
+    pub name: String,
+    /// Its parent's place in the list; the root, first, has none.
+    pub parent: Option<usize>,
+    pub bytes: u64,
+    pub files: u64,
+    pub types: Types,
 }
 
 #[derive(Serialize, Clone)]
@@ -176,10 +191,51 @@ impl ScanCtx {
         dir
     }
 
+    /// Replaces the running totals with a fast scan's latest look at the table.
+    pub(crate) fn set_live(&self, snaps: Vec<LiveSnap>) {
+        let dirs = snaps
+            .into_iter()
+            .enumerate()
+            .map(|(index, s)| {
+                std::sync::Arc::new(LiveDir {
+                    index,
+                    path: s.path,
+                    name: s.name,
+                    parent: s.parent,
+                    bytes: AtomicU64::new(s.bytes),
+                    files: AtomicU64::new(s.files),
+                    types: s.types.map(AtomicU64::new),
+                    // The whole table is read at once: no folder is "being walked" more than another.
+                    done: AtomicBool::new(true),
+                    denied: AtomicBool::new(false),
+                })
+            })
+            .collect();
+        *self.live.lock().unwrap() = dirs;
+        self.live_version.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// The running totals as data, for the elevated helper to pass on.
+    pub(crate) fn live_snaps(&self) -> Vec<LiveSnap> {
+        self.live
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|d| LiveSnap {
+                path: d.path.clone(),
+                name: d.name.clone(),
+                parent: d.parent,
+                bytes: d.bytes.load(Ordering::Relaxed),
+                files: d.files.load(Ordering::Relaxed),
+                types: std::array::from_fn(|i| d.types[i].load(Ordering::Relaxed)),
+            })
+            .collect()
+    }
+
     /// The scan so far as a tree for the space map: the top folders with what has been counted
     /// in them yet, those still being walked marked `live`. Items under `min_share` of the root
-    /// are left out, as on the finished map. `None` before the walk starts (or for a fast scan,
-    /// which has no walk to follow).
+    /// are left out, as on the finished map. `None` before the walk starts (or before a fast scan's
+    /// first look at the table).
     pub fn live_tree(&self, min_share: f64, limit: usize) -> Option<TreeItem> {
         let dirs: Vec<std::sync::Arc<LiveDir>> = self.live.lock().unwrap().clone();
         let root = dirs.first()?;
