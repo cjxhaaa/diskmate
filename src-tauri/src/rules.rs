@@ -155,7 +155,8 @@ fn target_size(t: &Target) -> Size {
         Target::Contents { path, min_age_days } => {
             measure(path, (*min_age_days > 0).then(|| days_ago(*min_age_days)))
         }
-        Target::Dir { path } | Target::Worktree { path, .. } => measure(path, None),
+        Target::Dir { path } => measure(path, None),
+        Target::Worktree { path, .. } => worktree_size(path),
         Target::File { path } => Size {
             bytes: util::file_len(path).unwrap_or(0),
             files: 1,
@@ -588,8 +589,23 @@ fn app_specs() -> Vec<Spec> {
 // Needs a look
 // ---------------------------------------------------------------------------------------------
 
+/// Runs git at idle priority, one thread, without writing anything it can skip: with a hundred
+/// worktrees to look at, `git status` would otherwise stat every file of each with a thread per
+/// core (index preloading) and rewrite each index, and the machine would crawl meanwhile.
 fn git(args: &[&str]) -> Option<String> {
-    let out = util::command("git").args(args).output().ok()?;
+    let out = util::idle_command("git")
+        .args([
+            "--no-optional-locks",
+            "-c",
+            "core.preloadIndex=false",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "index.threads=1",
+        ])
+        .args(args)
+        .output()
+        .ok()?;
     out.status
         .success()
         .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
@@ -607,12 +623,117 @@ pub fn worktree_is_clean(path: &Path) -> bool {
     })
 }
 
+/// A worktree's own folder inside the main repository's `.git` (from the `gitdir:` line of its
+/// `.git` file): its index, HEAD and reflog change whenever git is used in it.
+fn worktree_git_dir(path: &Path) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(path.join(".git")).ok()?;
+    let dir = text.lines().find_map(|l| l.strip_prefix("gitdir:"))?.trim();
+    let dir = PathBuf::from(dir.replace('/', "\\"));
+    Some(if dir.is_absolute() {
+        dir
+    } else {
+        path.join(dir)
+    })
+}
+
+fn mtime(p: &Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(p).ok()?.modified().ok()
+}
+
+/// When a worktree was last used: its last commit, anything at its top level, or git's own
+/// records of it (index, HEAD, reflog). All cheap — no walk through its files.
 fn worktree_last_activity(path: &Path) -> Option<std::time::SystemTime> {
-    let commit = git(&["-C", &path.to_string_lossy(), "log", "-1", "--format=%ct"])
-        .and_then(|s| s.trim().parse::<u64>().ok())
-        .map(|secs| std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs));
+    let git_dir = worktree_git_dir(path);
+    // A commit made here is in the reflog below; git is asked only when that is not to be found.
+    let commit = if git_dir.is_some() {
+        None
+    } else {
+        git(&["-C", &path.to_string_lossy(), "log", "-1", "--format=%ct"])
+            .and_then(|s| s.trim().parse::<u64>().ok())
+            .map(|secs| std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs))
+    };
     let touched = newest_mtime(path, &[]);
-    commit.into_iter().chain(touched).max()
+    let records = git_dir.iter().flat_map(|d| {
+        [d.join("index"), d.join("HEAD"), d.join("logs").join("HEAD")]
+            .into_iter()
+            .filter_map(|p| mtime(&p))
+    });
+    commit.into_iter().chain(touched).chain(records).max()
+}
+
+/// What was found about an idle worktree, kept while nothing about it changes (`stamp` is its last
+/// activity): whether it is clean, and its size once measured. A hundred worktrees are then
+/// looked at in moments on every launch after the first.
+#[derive(Serialize, serde::Deserialize, Clone)]
+struct WorktreeSeen {
+    stamp: u64,
+    clean: bool,
+    #[serde(default)]
+    size: Option<(u64, u64)>,
+}
+
+const WORKTREE_CACHE: &str = "worktrees.json";
+
+fn worktree_cache() -> &'static std::sync::Mutex<std::collections::HashMap<String, WorktreeSeen>> {
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, WorktreeSeen>>,
+    > = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| {
+        std::sync::Mutex::new(crate::cache::load(WORKTREE_CACHE).unwrap_or_default())
+    })
+}
+
+/// Whether an idle worktree (last active at `stamp`) is clean, asking git only when something
+/// changed since last time.
+fn idle_worktree_clean(path: &Path, stamp: u64) -> bool {
+    let key = display(path).to_lowercase();
+    if let Some(seen) = worktree_cache().lock().unwrap().get(&key) {
+        if seen.stamp == stamp {
+            return seen.clean;
+        }
+    }
+    let clean = worktree_is_clean(path);
+    worktree_cache().lock().unwrap().insert(
+        key,
+        WorktreeSeen {
+            stamp,
+            clean,
+            size: None,
+        },
+    );
+    clean
+}
+
+/// A worktree's size: from the last disk scan when it was taken after the worktree's last change
+/// (no reading at all), else measured — once per change, since an idle worktree's files stay as
+/// they were. Walking dozens of full checkouts is otherwise the slowest part of the whole check.
+fn worktree_size(path: &Path) -> Size {
+    let key = display(path).to_lowercase();
+    let stamp = worktree_last_activity(path)
+        .map(util::unix_secs)
+        .unwrap_or(0);
+    if let Some(seen) = worktree_cache().lock().unwrap().get(&key) {
+        if let (true, Some((bytes, files))) = (seen.stamp == stamp, seen.size) {
+            return Size { bytes, files };
+        }
+    }
+    if let Some((scanned_at, folders)) = crate::history::last_folder_sizes(path) {
+        if scanned_at > stamp {
+            if let Some(&bytes) = folders.get(&key) {
+                // The scan records bytes only; the file count is not shown for this item.
+                return Size { bytes, files: 0 };
+            }
+        }
+    }
+    let size = measure(path, None);
+    let mut cache = worktree_cache().lock().unwrap();
+    if let Some(seen) = cache.get_mut(&key) {
+        if seen.stamp == stamp {
+            seen.size = Some((size.bytes, size.files));
+        }
+    }
+    crate::cache::save(WORKTREE_CACHE, &*cache);
+    size
 }
 
 /// Git worktrees with nothing uncommitted and no activity for three days, in every repository
@@ -658,12 +779,15 @@ fn worktree_spec(home: &Path) -> Spec {
                             || wt
                                 .to_string_lossy()
                                 .eq_ignore_ascii_case(&repo.to_string_lossy());
+                        // Recently used ones are out without asking git at all; the rest are
+                        // asked once, and again only after something changes.
+                        let idle = wt
+                            .is_dir()
+                            .then(|| worktree_last_activity(&wt))
+                            .flatten()
+                            .filter(|t| *t < cutoff);
                         if !is_main
-                            && wt.is_dir()
-                            && worktree_last_activity(&wt)
-                                .map(|t| t < cutoff)
-                                .unwrap_or(false)
-                            && worktree_is_clean(&wt)
+                            && idle.is_some_and(|t| idle_worktree_clean(&wt, util::unix_secs(t)))
                         {
                             items.push((
                                 format!("{} · {}", name_of(&wt), branch),
@@ -680,6 +804,7 @@ fn worktree_spec(home: &Path) -> Spec {
         })
         .collect();
     spec.targets = found;
+    crate::cache::save(WORKTREE_CACHE, &*worktree_cache().lock().unwrap());
     spec
 }
 
@@ -887,5 +1012,58 @@ mod tests {
         );
         assert_eq!(found.len(), 1);
         assert!(found[0].1.ends_with("node_modules"));
+    }
+}
+
+#[cfg(test)]
+mod worktree_timing {
+    /// Times the idle-worktree check on this machine, twice (the second run uses what the first
+    /// remembered): `cargo test worktree_check_timing -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn worktree_check_timing() {
+        crate::util::background_thread();
+        let dir = tempfile::tempdir().unwrap();
+        crate::cache::init(dir.path().to_path_buf());
+        for run in 1..=2 {
+            let t = std::time::Instant::now();
+            let spec = super::worktree_spec(&crate::util::home());
+            println!(
+                "run {run}: {} idle clean worktrees in {:?}",
+                spec.targets.len(),
+                t.elapsed()
+            );
+        }
+    }
+    /// How many idle worktrees' sizes the last scan already knows, using the installed DiskMate's
+    /// history (read only): `cargo test worktree_sizes_from_history -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn worktree_sizes_from_history() {
+        crate::util::background_thread();
+        let dir = tempfile::tempdir().unwrap();
+        crate::cache::init(dir.path().to_path_buf());
+        crate::history::init(
+            crate::util::local_appdata()
+                .join("com.cjxhaaa.diskmate")
+                .join("history"),
+        );
+        let spec = super::worktree_spec(&crate::util::home());
+        let t = std::time::Instant::now();
+        let (mut known, mut measured) = (0, 0);
+        for (_, target) in &spec.targets {
+            if let super::Target::Worktree { path, .. } = target {
+                let size = super::worktree_size(path);
+                if size.files == 0 {
+                    known += 1
+                } else {
+                    measured += 1
+                }
+            }
+        }
+        println!(
+            "{known} sizes from the last scan, {measured} measured, in {:?}",
+            t.elapsed()
+        );
     }
 }

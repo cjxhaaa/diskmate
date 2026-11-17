@@ -391,6 +391,17 @@ pub fn command(program: &str) -> std::process::Command {
     cmd
 }
 
+/// [`command`] at idle priority, for chores that may take a while and touch many files (git status
+/// across dozens of worktrees): they run only when nothing else wants the CPU.
+pub fn idle_command(program: &str) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    const IDLE_PRIORITY_CLASS: u32 = 0x0000_0040;
+    let mut cmd = std::process::Command::new(program);
+    cmd.creation_flags(CREATE_NO_WINDOW | IDLE_PRIORITY_CLASS);
+    cmd
+}
+
 /// Puts the calling thread in background mode: lowest CPU priority, and low disk and memory
 /// priority too, so a scan yields to other programs instead of competing with them.
 pub fn background_thread() {

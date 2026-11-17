@@ -48,7 +48,7 @@ DiskMate 的想法很简单：
 | 📊 | **概览** | 磁盘按类别分账：系统、软件、开发工具与缓存、应用数据、个人文件、虚拟内存 / 休眠……鼠标移上去解释每一类是什么 |
 | 🧹 | **智能清理** | 系统垃圾、开发缓存、浏览器缓存、旧版 IDE 数据、闲置 worktree 等，分组列出，逐项说明影响，清理后显示实际释放了多少 |
 | 📦 | **应用管理** | 每个应用的程序大小 + 它藏在 AppData 里的数据大小 + 上次使用时间；调用自带卸载程序，卸完再帮你清掉残留 |
-| 🗂️ | **空间分析** | 可逐层点进去的矩形树图；**空间变化**页对比历史扫描，找出最近谁在长 |
+| 🗂️ | **空间分析** | 按文件类型上色的多层矩形树图，大文件单独成块，右键直接删除或移走；按类型 / 扩展名统计；找出很久没动的大文件夹；**空间变化**页对比历史扫描，找出最近谁在长 |
 | 🧾 | **文件整理** | 下载文件夹里装过的安装包、解压过的压缩包；按内容比对的重复文件；超过 100 MB 的大文件。删除默认进回收站；想留着的可以直接移到其他盘 |
 | 🚚 | **搬家与压缩** | 把微信聊天文件、Android SDK、Gradle 缓存等大文件夹搬到 D 盘，原路径留下链接，**软件不用改任何设置**；搬过去的随时能一键搬回 C 盘；压缩 WSL / Docker 的 .vhdx |
 | ⚡ | **开机启动** | 列出所有开机启动项，标注「可以关掉 / 建议保留」和理由；开关和任务管理器是同一个设置，随时可以改回来 |
@@ -70,7 +70,7 @@ DiskMate 的想法很简单：
     <td><img src="docs/screenshots/move-light.webp" alt="搬家"><p align="center">搬家：勾选后实时显示两边的可用空间</p></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/explorer-light.webp" alt="空间分析"><p align="center">空间分析：矩形树图逐层点进去</p></td>
+    <td><img src="docs/screenshots/explorer-light.webp" alt="空间分析"><p align="center">空间分析：按类型上色，大文件单独成块</p></td>
     <td><img src="docs/screenshots/startup-light.webp" alt="开机启动"><p align="center">开机启动：给出建议和理由</p></td>
   </tr>
   <tr>
@@ -108,7 +108,7 @@ DiskMate 的想法很简单：
 - 安装包 **3.8 MB**；关窗口后可以留在托盘，此时只占 **约 42 MB 内存**（窗口开着约 330 MB，大头是界面用的 WebView2）。
 - 扫描和其他后台工作（智能清理检查、测量大小）各用一组 2–6 个线程，都处于 Windows 的后台模式（CPU、磁盘、内存优先级都最低），不和你正在用的程序抢资源。
 - 不添加开机启动，没有后台服务，也没有定时任务。
-- 整盘扫描一般一到三分钟，机械硬盘会久一些，扫描时会显示进度和预计剩余时间。常用页面先显示上次的结果再在后台刷新，切页约 0.3 秒。
+- 整盘扫描一般一到三分钟，机械硬盘会久一些，扫描时会显示进度和预计剩余时间；NTFS 盘还可以「快速扫描」，直接读主文件表，几秒扫完（需要管理员授权）。扫描结果会保存，重启后不用重新扫描。常用页面先显示上次的结果再在后台刷新，切页约 0.3 秒。
 
 ## 常见问题
 
@@ -188,7 +188,7 @@ npm run tauri build    # 生成安装包：src-tauri/target/release/bundle/nsis/
 
 ## 致谢
 
-思路参考了 [WizTree](https://diskanalyzer.com/) / [TreeSize](https://www.jam-software.com/treesize_free)（空间分析）、CCleaner 与各类电脑管家（分类清理）、[npkill](https://github.com/voidcosmos/npkill) / [kondo](https://github.com/tbillington/kondo)（开发者构建产物）。基于 [Tauri](https://tauri.app/)、[React](https://react.dev/) 和 [Lucide](https://lucide.dev/) 图标构建。
+思路参考了 [WizTree](https://diskanalyzer.com/) / [WinDirStat](https://windirstat.net/) / [SpaceSniffer](http://www.uderzo.it/main_products/space_sniffer/) / [TreeSize](https://www.jam-software.com/treesize_free)（空间分析）、CCleaner 与各类电脑管家（分类清理）、[npkill](https://github.com/voidcosmos/npkill) / [kondo](https://github.com/tbillington/kondo)（开发者构建产物）。基于 [Tauri](https://tauri.app/)、[React](https://react.dev/) 和 [Lucide](https://lucide.dev/) 图标构建。
 
 感谢 [LINUX DO](https://linux.do/) 社区的支持与反馈。
 

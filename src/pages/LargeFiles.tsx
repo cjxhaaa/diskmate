@@ -47,14 +47,25 @@ function protectedReason(f: LargeFile): string | null {
 
 /** The large-files tab of the Files page: everything over 100 MB the last scan saw. */
 export function LargeFilesPanel() {
-  const { current, toast, refreshDrives, startScan, scanning, drives } = useStore();
+  const { current, toast, refreshDrives, startScan, scanning, drives, restoreSaved } = useStore();
   const [files, setFiles] = useState<LargeFile[] | null>(null);
   const [kind, setKind] = useState<Kind>("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [confirm, setConfirm] = useState(false);
   const [moving, setMoving] = useState(false);
-  // A result read back from history has no file list behind it.
+  const [restoring, setRestoring] = useState(false);
+  // Only a past session's totals on screen: the list comes with the scan saved then.
   const scanDone = !!current && !current.fromHistory;
+  const fromHistory = current?.fromHistory ? current.root : null;
+  useEffect(() => {
+    if (!fromHistory) return;
+    let alive = true;
+    setRestoring(true);
+    void restoreSaved(fromHistory).finally(() => alive && setRestoring(false));
+    return () => {
+      alive = false;
+    };
+  }, [fromHistory, restoreSaved]);
 
   useEffect(() => {
     setFiles(null);
@@ -79,6 +90,9 @@ export function LargeFilesPanel() {
       return;
     }
     toast(`${permanent ? "已删除" : "已移到回收站"}：${formatBytes(out.freed)}${failNote(out)}`);
+    // What is gone no longer counts in the stored scan, which the space map reads too. When some
+    // failed there is no telling which, so the scan is left as it was.
+    if (!out.skippedFiles) void api.forgetPaths(chosen.map((f) => f.path));
     setFiles((list) => list?.filter((f) => !selected.has(f.path)) ?? null);
     setSelected(new Set());
     void refreshDrives();
@@ -89,6 +103,7 @@ export function LargeFilesPanel() {
     toast(`已移到 ${drive.replace("\\", "")}：${formatBytes(out.freed)}${failNote(out)}`);
     // The list is the last scan's: drop exactly what left this drive.
     const gone = new Set(out.moved.map((p) => p.toLowerCase()));
+    void api.forgetPaths(out.moved);
     setFiles((list) => list?.filter((f) => !gone.has(f.path.toLowerCase())) ?? null);
     setSelected(new Set());
     void refreshDrives();
@@ -114,8 +129,10 @@ export function LargeFilesPanel() {
           <div className="empty-icon">
             <FileBox size={30} />
           </div>
-          <div>{current?.fromHistory ? "概览里的数字来自上次扫描，列出大文件需要重新扫描一次" : "扫描完成后会在这里列出大文件"}</div>
-          {current?.fromHistory && (
+          <div>
+            {restoring ? "正在读取上次的扫描结果…" : current?.fromHistory ? "上次的扫描没有保存文件列表（旧版本扫描的），需要重新扫描一次" : "扫描完成后会在这里列出大文件"}
+          </div>
+          {current?.fromHistory && !restoring && (
             <button className="btn btn-primary" disabled={!!scanning} onClick={() => startScan()}>
               重新扫描
             </button>

@@ -30,10 +30,12 @@ const categories = [
   { id: "recycle", bytes: 0.4 * GB },
 ];
 
-const tree: Record<string, [string, number, boolean?][]> = {
+// The space map's sample drive: folders by path, big files by folder, and what kinds of file
+// fill each folder (by keyword). Folders not listed get a generic project-like set, so drilling
+// in anywhere shows something.
+const tree: Record<string, [string, number][]> = {
   "C:\\": [
     ["Users", 290 * GB],
-    ["pagefile.sys + hiberfil.sys", 43 * GB, true],
     ["Windows", 33 * GB],
     ["Program Files", 21 * GB],
     ["Program Files (x86)", 9 * GB],
@@ -45,45 +47,307 @@ const tree: Record<string, [string, number, boolean?][]> = {
     ["AppData", 92 * GB],
     ["chorus", 61 * GB],
     [".android", 13 * GB],
+    ["OneDrive", 21 * GB],
+    ["vibe-app", 19 * GB],
+    ["xiuxian", 14 * GB],
     ["Documents", 12 * GB],
+    ["Videos", 9.4 * GB],
+    ["Music", 7.3 * GB],
     ["game-engine", 6.1 * GB],
     [".gradle", 5.4 * GB],
     ["Mag", 4.8 * GB],
     ["xwechat_files", 3.1 * GB],
     ["Downloads", 2.6 * GB],
     [".cargo", 2.2 * GB],
-    [".bun", 0.2 * GB],
+    ["Pictures", 1.9 * GB],
     ["Desktop", 0.6 * GB],
   ],
+  "C:\\Users\\alex\\.android": [["avd", 9.1 * GB], ["cache", 0.3 * GB]],
   "C:\\Users\\alex\\AppData": [["Local", 61 * GB], ["Roaming", 30 * GB], ["LocalLow", 0.3 * GB]],
   "C:\\Users\\alex\\AppData\\Local": [
     ["Packages", 13 * GB],
     ["Google", 12 * GB],
     ["Android", 12 * GB],
     ["JetBrains", 6.7 * GB],
+    ["Docker", 5.2 * GB],
     ["Microsoft", 2.5 * GB],
     ["Temp", 2.4 * GB],
-    ["npm-cache", 0.1 * GB],
+    ["npm-cache", 1.9 * GB],
+  ],
+  "C:\\Users\\alex\\AppData\\Roaming": [
+    ["Claude", 11 * GB],
+    ["Tencent", 7.2 * GB],
+    ["Code", 4.1 * GB],
+    ["npm", 2.6 * GB],
+    ["Cursor", 2.2 * GB],
+  ],
+  "C:\\Users\\alex\\chorus": [
+    ["node_modules", 18 * GB],
+    ["apps", 16 * GB],
+    [".git", 9.5 * GB],
+    ["packages", 7.4 * GB],
+    ["build", 6.2 * GB],
+    ["docs", 1.1 * GB],
+  ],
+  "C:\\Users\\alex\\Documents": [
+    ["WeChat Files", 6.2 * GB],
+    ["旧项目备份 2022", 3.1 * GB],
+    ["论文资料", 1.4 * GB],
+    ["WPS Cloud Files", 0.9 * GB],
+  ],
+  "C:\\Windows": [
+    ["WinSxS", 9.8 * GB],
+    ["System32", 7.6 * GB],
+    ["Installer", 4.2 * GB],
+    ["SoftwareDistribution", 2.4 * GB],
+    ["Fonts", 1.1 * GB],
+    ["Logs", 0.6 * GB],
   ],
 };
 
-function children(path: string) {
-  const rows = tree[path] ?? [
-    ["src", 1.2 * GB],
-    ["build", 0.8 * GB],
-    ["node_modules", 0.5 * GB],
-    ["docs", 0.05 * GB],
-  ];
-  return rows.map(([name, size, isFiles]) => ({
-    name,
-    path: isFiles ? path : `${path.replace(/\\$/, "")}\\${name}`,
-    size,
-    files: Math.round(size / (3 * MB)),
-    hasChildren: !isFiles,
-    denied: false,
-    isFiles: !!isFiles,
-  }));
+// Big files by folder: name, size, kind (src/filetypes.ts), days since last change.
+const bigFiles: Record<string, [string, number, number, number][]> = {
+  "C:\\": [
+    ["pagefile.sys", 30.2 * GB, 8, 0],
+    ["hiberfil.sys", 12.7 * GB, 8, 1],
+  ],
+  "C:\\Users\\alex\\Downloads": [
+    ["android-studio-2025.3.3-windows.exe", 1.3 * GB, 5, 58],
+    ["Godot_v4.7-stable_win64.exe.zip", 0.6 * GB, 3, 25],
+    ["PixelToPath-v1.0.0_Windows.zip", 0.2 * GB, 3, 60],
+  ],
+  "C:\\Users\\alex\\Videos": [
+    ["录屏 2026-09-14.mp4", 2.4 * GB, 0, 63],
+    ["发布会直播回放.mkv", 3.8 * GB, 0, 210],
+    ["产品演示 v2.mov", 1.6 * GB, 0, 120],
+  ],
+  "C:\\Users\\alex\\.android": [["pixel8_api36.avd.qcow2", 3.6 * GB, 4, 12]],
+  "C:\\Users\\alex\\AppData\\Local\\Docker": [["docker_data.vhdx", 4.9 * GB, 4, 2]],
+  "C:\\Users\\alex\\AppData\\Roaming\\Claude": [["rootfs.img", 8.1 * GB, 4, 4]],
+  "C:\\Users\\alex": [
+    ["vibe-ai-betaRelease-1.5.0.aab", 152 * MB, 3, 400],
+    ["gradle-8.11.1-bin.zip", 133 * MB, 3, 560],
+  ],
+};
+
+// How old the newest file in a folder is, in days, for a few telling folders; others get a
+// steady made-up age from their name.
+const ages: Record<string, number> = {
+  "C:\\Users\\alex\\game-engine": 820,
+  "C:\\Users\\alex\\Mag": 1300,
+  "C:\\Users\\alex\\Documents\\旧项目备份 2022": 1050,
+  "C:\\Users\\alex\\Documents\\论文资料": 610,
+  "C:\\Users\\alex\\AppData\\Local\\JetBrains": 420,
+  "C:\\Users\\alex\\Pictures": 390,
+};
+
+/** Kinds of file in a folder, as weights, guessed from words in its path. */
+function mixOf(path: string): number[] {
+  const p = path.toLowerCase();
+  const w = new Array(10).fill(0);
+  const add = (k: number, v: number) => (w[k] += v);
+  if (/videos|录屏/.test(p)) add(0, 8);
+  if (/pictures|wechat|xwechat|tencent|论文/.test(p)) add(1, 3);
+  if (/wechat|xwechat|tencent/.test(p)) add(0, 2);
+  if (/music|qqmusic/.test(p)) add(2, 6);
+  if (/downloads|installer|备份/.test(p)) add(3, 4);
+  if (/\.android|docker|claude|packages$/.test(p)) add(4, 5);
+  if (/program files|windows|system32|winsxs|microsoft/.test(p)) add(5, 5);
+  if (/node_modules|chorus|game-engine|\.gradle|\.cargo|npm|android|jetbrains|code|cursor|build|\.git|apps|mag/.test(p)) add(6, 5);
+  if (/documents|docs|论文|wps|备份/.test(p)) add(7, 3);
+  if (/windows|logs|softwaredistribution|temp/.test(p)) add(8, 3);
+  if (/appdata|onedrive|vibe-app|xiuxian/.test(p)) {
+    add(5, 2);
+    add(6, 2);
+    add(1, 1);
+  }
+  add(9, 1);
+  return w;
 }
+
+function hash(s: string) {
+  let h = 0;
+  for (const c of s) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return h;
+}
+
+const ageOf =(path: string) => ages[path] ?? (hash(path) % 300);
+const join = (dir: string, name: string) => (dir.endsWith("\\") ? dir + name : `${dir}\\${name}`);
+const nameOf = (path: string) => (/^[A-Za-z]:\\$/.test(path) ? path : path.split("\\").pop()!);
+
+/** Bytes by kind: a listed folder adds up its subfolders and big files; others go by keywords. */
+function typesOf(path: string, size: number): number[] {
+  const w = mixOf(path);
+  const sum = w.reduce((a, b) => a + b, 0);
+  const own = (bytes: number) => w.map((v) => (bytes * v) / sum);
+  if (!tree[path]) return own(size);
+  const out = new Array(10).fill(0);
+  let left = size;
+  for (const [n, s] of tree[path]) {
+    typesOf(join(path, n), s).forEach((v, i) => (out[i] += v));
+    left -= s;
+  }
+  for (const [, s, k] of bigFiles[path] ?? []) {
+    out[k] += s;
+    left -= s;
+  }
+  own(Math.max(0, left)).forEach((v, i) => (out[i] += v));
+  return out;
+}
+
+function subfolders(path: string, size: number): [string, number][] {
+  if (tree[path]) return tree[path];
+  // Anywhere else: a generic project's insides, scaled to what the folder's big files leave.
+  const base = size - (bigFiles[path] ?? []).reduce((s, f) => s + f[1], 0);
+  if (base < 64 * MB) return [];
+  return [
+    ["src", base * 0.34],
+    ["build", base * 0.26],
+    ["node_modules", base * 0.18],
+    ["assets", base * 0.09],
+    ["docs", base * 0.03],
+  ];
+}
+
+function sizeOf(path: string): number | null {
+  if (path === "C:\\") return 400 * GB;
+  const parent = path.slice(0, path.lastIndexOf("\\")) || "C:\\";
+  const up = /^[A-Za-z]:$/.test(parent) ? parent + "\\" : parent;
+  const ps = sizeOf(up);
+  if (ps === null) return null;
+  const hit = subfolders(up, ps).find(([n]) => n.toLowerCase() === nameOf(path).toLowerCase());
+  return hit ? hit[1] : null;
+}
+
+function mockItem(path: string, size: number, depth: number, min: number, limit: number): import("./api").TreeItem {
+  const subs = subfolders(path, size);
+  const files = bigFiles[path] ?? [];
+  const item: import("./api").TreeItem = {
+    name: nameOf(path),
+    path,
+    kind: "dir",
+    size,
+    files: Math.max(1, Math.round(size / (2.4 * MB))),
+    modified: now() - ageOf(path) * 86400,
+    denied: false,
+    types: typesOf(path, size),
+    hasChildren: size >= 2 * MB,
+  };
+  if (depth <= 0) return item;
+  const kids: import("./api").TreeItem[] = [];
+  let rest = size;
+  for (const [n, s] of subs) {
+    if (s >= min && kids.length < limit) {
+      kids.push(mockItem(join(path, n), s, depth - 1, min, limit));
+      rest -= s;
+    }
+  }
+  for (const [n, s, k, days] of files) {
+    if (s >= min && kids.length < limit) {
+      const types = new Array(10).fill(0);
+      types[k] = s;
+      kids.push({ name: n, path: join(path, n), kind: "file", size: s, files: 1, modified: now() - days * 86400, denied: false, types, hasChildren: false });
+      rest -= s;
+    }
+  }
+  if (rest > size * 0.002) {
+    const count = Math.max(1, Math.round(rest / (1.3 * MB)));
+    kids.push({
+      name: subs.length ? "小文件夹和零散文件" : `此文件夹中的 ${count} 个文件`,
+      path,
+      kind: "rest",
+      size: rest,
+      files: count,
+      modified: 0,
+      denied: false,
+      types: typesOf(path, rest),
+      hasChildren: false,
+    });
+  }
+  kids.sort((a, b) => b.size - a.size);
+  item.children = kids;
+  return item;
+}
+
+function getTree(path: string, depth: number, minShare: number, limit: number) {
+  const size = sizeOf(path);
+  if (size === null) throw new Error(`扫描结果里没有 ${path}`);
+  return mockItem(path, size, depth, size * minShare, limit);
+}
+
+/** Every folder and big file of the sample drive (known folders only), for search and stale. */
+function walkSample(visit: (h: import("./api").Hit, depth: number) => boolean | void, path = "C:\\", depth = 0) {
+  const size = sizeOf(path)!;
+  for (const [n, s, k, days] of bigFiles[path] ?? []) {
+    const types = new Array(10).fill(0);
+    types[k] = s;
+    visit({ name: n, path: join(path, n), isDir: false, size: s, files: 1, modified: now() - days * 86400, types }, depth);
+  }
+  for (const [n, s] of subfolders(path, size)) {
+    const p = join(path, n);
+    const hit = { name: n, path: p, isDir: true, size: s, files: Math.round(s / (2.4 * MB)), modified: now() - ageOf(p) * 86400, types: typesOf(p, s) };
+    if (visit(hit, depth) !== false && (tree[p] || bigFiles[p])) walkSample(visit, p, depth + 1);
+  }
+}
+
+function searchSample(q: import("./api").SearchQuery) {
+  const text = (q.text ?? "").toLowerCase();
+  const out: import("./api").Hit[] = [];
+  walkSample((h) => {
+    if (q.under && !h.path.toLowerCase().startsWith(q.under.toLowerCase().replace(/\\$/, "") + "\\")) return;
+    const kind = h.types.findIndex((v) => v === Math.max(...h.types));
+    const ext = h.name.includes(".") ? h.name.split(".").pop()!.toLowerCase() : "";
+    if (q.only === "files" && h.isDir) return;
+    if (q.only === "dirs" && !h.isDir) return;
+    if ((q.kind ?? null) !== null && (h.isDir || kind !== q.kind)) return;
+    if (q.ext != null && (h.isDir || ext !== q.ext)) return;
+    if (q.minSize && h.size < q.minSize) return;
+    if (q.olderThan && h.modified >= q.olderThan) return;
+    if (text && !h.name.toLowerCase().includes(text)) return;
+    out.push(h);
+  });
+  return out.sort((a, b) => b.size - a.size).slice(0, 300);
+}
+
+const NOT_STALE = ["windows", "program files", "program files (x86)", "programdata", "$recycle.bin"];
+
+function staleSample(days: number, minSize: number) {
+  const cutoff = now() - days * 86400;
+  const out: import("./api").Hit[] = [];
+  walkSample((h, depth) => {
+    if (!h.isDir || h.size < minSize) return false;
+    if (depth === 0 && NOT_STALE.includes(h.name.toLowerCase())) return false;
+    if (h.modified < cutoff) {
+      out.push(h);
+      return false;
+    }
+  });
+  return out.sort((a, b) => b.size - a.size);
+}
+
+const extSample: import("./api").ExtStat[] = [
+  ["sys", 8, 43.1 * GB, 12],
+  ["dll", 5, 31.2 * GB, 61200],
+  ["js", 6, 14.8 * GB, 402000],
+  ["vhdx", 4, 10.1 * GB, 2],
+  ["mp4", 0, 8.6 * GB, 214],
+  ["img", 4, 8.1 * GB, 3],
+  ["exe", 5, 7.9 * GB, 4100],
+  ["pack", 6, 7.1 * GB, 38],
+  ["jar", 6, 5.6 * GB, 2300],
+  ["", 9, 5.2 * GB, 98000],
+  ["jpg", 1, 4.9 * GB, 21000],
+  ["qcow2", 4, 3.6 * GB, 1],
+  ["mkv", 0, 3.8 * GB, 2],
+  ["zip", 3, 3.1 * GB, 160],
+  ["png", 1, 2.9 * GB, 88000],
+  ["msi", 3, 2.6 * GB, 140],
+  ["pdb", 6, 2.4 * GB, 900],
+  ["log", 8, 1.8 * GB, 12000],
+  ["pdf", 7, 1.2 * GB, 640],
+  ["mp3", 2, 0.9 * GB, 310],
+  ["docx", 7, 0.4 * GB, 820],
+].map(([ext, kind, bytes, files]) => ({ ext: ext as string, kind: kind as number, bytes: bytes as number, files: files as number }));
 
 const largeFiles = [
   ["C:\\pagefile.sys", 30.2 * GB, 1791900000],
@@ -251,9 +515,38 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
       return undefined as T;
     case "scan_summaries":
       return [] as T;
-    case "get_children":
-      await sleep(60);
-      return children(String(args?.path)) as T;
+    case "can_fast_scan":
+      return true as T;
+    case "get_tree":
+      await sleep(40);
+      return getTree(String(args?.path), Number(args?.depth), Number(args?.minShare), Number(args?.limit)) as T;
+    case "restore_scan": {
+      // As if the last scan's tree had been saved: the same scan the history ends with.
+      await sleep(300);
+      const t = now();
+      return {
+        root: "C:\\", total, free, scanned: 399 * GB, files: 1_230_000, dirs: 156_000, deniedDirs: 214,
+        elapsedMs: 74_000, cancelled: false, scannedAt: t - 3600, categories,
+      } as T;
+    }
+    case "path_actions": {
+      const p = String(args?.path);
+      const app = /\\(appdata|\.[^\\]+|xwechat_files|wechat files)(\\|$)/i.test(p);
+      const mine = /^C:\\Users\\alex\\/i.test(p);
+      return (mine && !app
+        ? { allowed: true, reason: null }
+        : { allowed: false, reason: app ? "这是应用自己的数据，直接删除或移走可能让应用出错，请在智能清理或应用管理里处理" : "系统和程序的文件不能在这里删除或移走，只能处理你的用户文件夹里的文件" }) as T;
+    }
+    case "forget_paths":
+      return undefined as T;
+    case "search_scan":
+      await sleep(80);
+      return searchSample((args?.query ?? {}) as import("./api").SearchQuery) as T;
+    case "stale_folders":
+      await sleep(80);
+      return staleSample(Number(args?.days), Number(args?.minSize)) as T;
+    case "ext_stats":
+      return extSample as T;
     case "large_files":
       return largeFiles as T;
     case "analyze_cleanup": {

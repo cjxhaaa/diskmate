@@ -38,14 +38,54 @@ export interface ScanSummary {
   categories: CategoryStat[];
 }
 
-export interface NodeView {
+/** One item of the space map or its list: a folder, a big file, or a folder's leftovers. */
+export interface TreeItem {
   name: string;
   path: string;
+  kind: "dir" | "file" | "rest";
   size: number;
   files: number;
-  hasChildren: boolean;
+  /** Newest file under a folder, or the file's own last change, as Unix seconds. */
+  modified: number;
   denied: boolean;
-  isFiles: boolean;
+  /** Bytes by kind of file (src/filetypes.ts). */
+  types: number[];
+  hasChildren: boolean;
+  children?: TreeItem[];
+}
+
+/** A folder or file found by a search or the stale-folders list. */
+export interface Hit {
+  name: string;
+  path: string;
+  isDir: boolean;
+  size: number;
+  files: number;
+  modified: number;
+  types: number[];
+}
+
+export interface SearchQuery {
+  text?: string;
+  kind?: number | null;
+  ext?: string | null;
+  minSize?: number;
+  /** Nothing changed since this Unix time. */
+  olderThan?: number | null;
+  only?: "dirs" | "files" | null;
+  under?: string | null;
+}
+
+export interface ExtStat {
+  ext: string;
+  kind: number;
+  bytes: number;
+  files: number;
+}
+
+export interface PathActions {
+  allowed: boolean;
+  reason: string | null;
 }
 
 export interface LargeFile {
@@ -353,9 +393,19 @@ async function on<T>(event: string, handler: (payload: T) => void): Promise<Unli
 
 export const api = {
   listDrives: () => call<DriveInfo[]>("list_drives"),
-  startScan: (root: string) => call<void>("start_scan", { root }),
+  /** `fast`: read the NTFS master file table (needs administrator rights; Windows asks). */
+  startScan: (root: string, fast = false) => call<void>("start_scan", { root, fast }),
+  canFastScan: (root: string) => call<boolean>("can_fast_scan", { root }),
   cancelScan: () => call<void>("cancel_scan"),
-  getChildren: (path: string) => call<NodeView[]>("get_children", { path }),
+  getTree: (path: string, depth: number, minShare: number, limit: number) =>
+    call<TreeItem>("get_tree", { path, depth, minShare, limit }),
+  /** The last saved scan of `root`, made current; null when there is none. */
+  restoreScan: (root: string) => call<ScanSummary | null>("restore_scan", { root }),
+  pathActions: (path: string) => call<PathActions>("path_actions", { path }),
+  forgetPaths: (paths: string[]) => call<void>("forget_paths", { paths }),
+  searchScan: (root: string, query: SearchQuery) => call<Hit[]>("search_scan", { root, query }),
+  staleFolders: (root: string, days: number, minSize: number) => call<Hit[]>("stale_folders", { root, days, minSize }),
+  extStats: (root: string) => call<ExtStat[]>("ext_stats", { root }),
   largeFiles: (root: string) => call<LargeFile[]>("large_files", { root }),
   scanSummaries: () => call<ScanSummary[]>("scan_summaries"),
   analyzeCleanup: () => call<CleanItem[]>("analyze_cleanup"),
@@ -423,6 +473,8 @@ export const api = {
   onScanDone: (h: (s: ScanSummary) => void) => on("scan-done", h),
   /** The scan of the given root broke off with an internal error; nothing was saved. */
   onScanFailed: (h: (root: string) => void) => on("scan-failed", h),
+  /** A scan that could not run or finish, with why (a fast scan without administrator rights). */
+  onScanError: (h: (e: { root: string; message: string }) => void) => on("scan-error", h),
   onAnalyzeProgress: (h: (p: AnalyzeProgress) => void) => on("analyze-progress", h),
   onCleanProgress: (h: (p: CleanProgress) => void) => on("clean-progress", h),
 };

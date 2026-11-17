@@ -81,6 +81,38 @@ fn prune(dir: &Path, root: &str) {
 }
 
 /// Every saved scan of `root`, oldest first.
+/// Where past scans are kept, set once at startup, for code that has no app handle at hand.
+static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+pub fn init(dir: PathBuf) {
+    let _ = DIR.set(dir);
+}
+
+/// The folders recorded by the last complete scan of the drive `path` is on, with when it was
+/// taken: lowercased path → bytes. Read once per scan and kept, since it is asked for path by path.
+pub fn last_folder_sizes(path: &Path) -> Option<(u64, std::sync::Arc<HashMap<String, u64>>)> {
+    type Loaded = (PathBuf, u64, std::sync::Arc<HashMap<String, u64>>);
+    static LOADED: std::sync::Mutex<Option<Loaded>> = std::sync::Mutex::new(None);
+    let dir = DIR.get()?;
+    let root = display(path).chars().take(3).collect::<String>();
+    let last = list(dir, &root).into_iter().rev().find(|s| !s.cancelled)?;
+    let file = folders_file(dir, &last.root, last.scanned_at);
+    let mut loaded = LOADED.lock().unwrap();
+    if let Some((f, at, map)) = loaded.as_ref() {
+        if *f == file {
+            return Some((*at, map.clone()));
+        }
+    }
+    let Folders(list) = serde_json::from_slice(&std::fs::read(&file).ok()?).ok()?;
+    let map: HashMap<String, u64> = list
+        .into_iter()
+        .map(|(p, bytes)| (p.to_lowercase(), bytes))
+        .collect();
+    let map = std::sync::Arc::new(map);
+    *loaded = Some((file, last.scanned_at, map.clone()));
+    Some((last.scanned_at, map))
+}
+
 pub fn list(dir: &Path, root: &str) -> Vec<Summary> {
     let prefix = format!("{}_", drive_tag(root));
     let mut out: Vec<Summary> = std::fs::read_dir(dir)
@@ -300,9 +332,12 @@ mod tests {
                     denied: false,
                     small: 0,
                     children: vec![],
+                    ..Default::default()
                 }],
+                ..Default::default()
             },
             large: vec![],
+            exts: vec![],
             summary: Summary {
                 root: r"C:\".into(),
                 total: 100 * gb,
@@ -327,5 +362,37 @@ mod tests {
         assert_eq!(d.used_delta, 2 * gb as i64);
         assert_eq!(d.grew[0].path, r"C:\xwechat_files");
         assert_eq!(d.categories[0].delta, 2 * gb as i64);
+    }
+
+    #[test]
+    fn folder_sizes_come_from_the_last_scan() {
+        use crate::scan::{Node, ScanData, Summary};
+        let dir = tempfile::tempdir().unwrap();
+        let gb = 1024 * 1024 * 1024u64;
+        let data = ScanData {
+            root: PathBuf::from(r"C:\"),
+            tree: Node {
+                name: r"C:\".into(),
+                size: 3 * gb,
+                children: vec![Node {
+                    name: "Work".into(),
+                    size: 2 * gb,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            large: vec![],
+            summary: Summary {
+                root: r"C:\".into(),
+                scanned_at: 1000,
+                ..Default::default()
+            },
+            exts: vec![],
+        };
+        save(dir.path(), &data).unwrap();
+        init(dir.path().to_path_buf());
+        let (at, sizes) = last_folder_sizes(Path::new(r"C:\Work\x")).unwrap();
+        assert_eq!(at, 1000);
+        assert_eq!(sizes.get(r"c:\work"), Some(&(2 * gb)));
     }
 }
