@@ -123,6 +123,53 @@ pub fn hard_link_identity(path: &Path) -> Option<(u32, u64)> {
     })
 }
 
+/// Every name of the file at `path` (its hard links), each from its volume's root without the
+/// drive: `\Windows\System32\kernel32.dll`. Empty if the file cannot be asked.
+pub fn link_names(path: &Path) -> Vec<String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::{PCWSTR, PWSTR};
+    use windows::Win32::Storage::FileSystem::{FindClose, FindFirstFileNameW, FindNextFileNameW};
+    let wide: Vec<u16> = long_path(path)
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut buf = vec![0u16; 512];
+    let mut out = Vec::new();
+    // A name longer than the buffer: the call says how long, and is made again.
+    let mut len = buf.len() as u32;
+    let mut first =
+        unsafe { FindFirstFileNameW(PCWSTR(wide.as_ptr()), 0, &mut len, PWSTR(buf.as_mut_ptr())) };
+    if first.is_err() && len as usize > buf.len() {
+        buf.resize(len as usize, 0);
+        len = buf.len() as u32;
+        first = unsafe {
+            FindFirstFileNameW(PCWSTR(wide.as_ptr()), 0, &mut len, PWSTR(buf.as_mut_ptr()))
+        };
+    }
+    let Ok(find) = first else {
+        return out;
+    };
+    loop {
+        let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+        out.push(String::from_utf16_lossy(&buf[..end]));
+        len = buf.len() as u32;
+        let mut next = unsafe { FindNextFileNameW(find, &mut len, PWSTR(buf.as_mut_ptr())) };
+        if next.is_err() && len as usize > buf.len() {
+            buf.resize(len as usize, 0);
+            len = buf.len() as u32;
+            next = unsafe { FindNextFileNameW(find, &mut len, PWSTR(buf.as_mut_ptr())) };
+        }
+        if next.is_err() {
+            break;
+        }
+    }
+    unsafe {
+        let _ = FindClose(find);
+    }
+    out
+}
+
 /// One entry of [`list_dir`].
 pub struct ListEntry {
     pub name: std::ffi::OsString,

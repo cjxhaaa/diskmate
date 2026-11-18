@@ -577,53 +577,45 @@ fn build_tree(g: &mut Gathered, ctx: &ScanCtx, drive: &str) -> Result<Node, Stri
         kids.entry(d.parent).or_default().push(no);
     }
 
-    // Which folders are under C:\Windows\WinSxS: a file linked from there and from elsewhere
-    // counts elsewhere, as in the normal scan (and as DISM counts the component store).
-    let find_child = |parent: u64, name: &str| {
-        kids.get(&parent).and_then(|k| {
-            k.iter()
-                .copied()
-                .find(|c| g.dirs[c].name.eq_ignore_ascii_case(name))
-        })
-    };
-    let sys = crate::util::system_root();
-    let sxs = sys
-        .file_name()
-        .and_then(|w| find_child(ROOT, &w.to_string_lossy()))
-        .and_then(|w| find_child(w, "WinSxS"));
-    let mut in_sxs: HashMap<u64, bool> = HashMap::new();
-    let mut under_sxs = |dir: u64| -> bool {
+    // A file with several names counts under the one [`scan::link_rank`] picks among the folders
+    // in the tree, as the normal scan places it.
+    let mut reachable: HashMap<u64, bool> = HashMap::new();
+    let mut in_tree = |dir: u64| -> bool {
         let mut chain = Vec::new();
         let mut d = dir;
         let found = loop {
-            if let Some(&v) = in_sxs.get(&d) {
+            if let Some(&v) = reachable.get(&d) {
                 break v;
             }
-            if Some(d) == sxs {
+            if d == ROOT {
                 break true;
             }
-            if d == ROOT || chain.len() > 512 {
+            let Some(x) = g.dirs.get(&d) else {
+                break false;
+            };
+            if d == EXTEND || x.reparse || chain.len() > 512 {
                 break false;
             }
             chain.push(d);
-            match g.dirs.get(&d) {
-                Some(x) => d = x.parent,
-                None => break false,
-            }
+            d = x.parent;
         };
         for c in chain {
-            in_sxs.insert(c, found);
+            reachable.insert(c, found);
         }
         found
     };
+    let winsxs = scan::winsxs_prefix();
     let links = std::mem::take(&mut g.links);
     let placed: Vec<(u64, String, u64, u64)> = links
         .into_iter()
         .filter_map(|(names, len, modified)| {
             names
                 .into_iter()
-                .filter(|(p, _)| g.dirs.contains_key(p))
-                .min_by_key(|(p, _)| under_sxs(*p))
+                .filter(|(p, _)| in_tree(*p))
+                .min_by_key(|(p, n)| {
+                    let path = display(&PathBuf::from(dir_path(&g.dirs, *p, drive)).join(n));
+                    scan::link_rank(&path, &winsxs)
+                })
                 .map(|(p, n)| (p, n, len, modified))
         })
         .collect();
@@ -658,24 +650,12 @@ fn build_tree(g: &mut Gathered, ctx: &ScanCtx, drive: &str) -> Result<Node, Stri
         node
     }
 
-    // Large files need their full paths: the folders' names up to the root.
-    let path_of = |mut d: u64| -> String {
-        let mut parts = Vec::new();
-        while d != ROOT && parts.len() < 512 {
-            let Some(x) = g.dirs.get(&d) else { break };
-            parts.push(x.name.as_str());
-            d = x.parent;
-        }
-        parts.reverse();
-        let mut p = PathBuf::from(drive);
-        p.extend(parts);
-        display(&p)
-    };
+    // Large files need their full paths.
     let large: Vec<_> = std::mem::take(&mut g.large)
         .into_iter()
         .map(|(dir, name, size, modified)| {
             (
-                display(&PathBuf::from(path_of(dir)).join(&name)),
+                display(&PathBuf::from(dir_path(&g.dirs, dir, drive)).join(&name)),
                 name,
                 size,
                 modified,
@@ -686,6 +666,20 @@ fn build_tree(g: &mut Gathered, ctx: &ScanCtx, drive: &str) -> Result<Node, Stri
         ctx.add_large(path, name, size, modified);
     }
     Ok(build(ROOT, drive.to_string(), g, &kids, ctx, 0))
+}
+
+/// A folder's full path: its and its parents' names up to the root.
+fn dir_path(dirs: &HashMap<u64, Dir>, mut d: u64, drive: &str) -> String {
+    let mut parts = Vec::new();
+    while d != ROOT && parts.len() < 512 {
+        let Some(x) = dirs.get(&d) else { break };
+        parts.push(x.name.as_str());
+        d = x.parent;
+    }
+    parts.reverse();
+    let mut p = PathBuf::from(drive);
+    p.extend(parts);
+    display(&p)
 }
 
 // ---------------------------------------------------------------------------------------------

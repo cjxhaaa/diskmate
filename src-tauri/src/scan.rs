@@ -103,7 +103,7 @@ pub struct ScanCtx {
     large: Mutex<Vec<LargeFile>>,
     /// Ids of the files met so far, to count a file with several names (hard links) once; in
     /// shards, so the walking threads rarely wait for each other.
-    seen_links: [Mutex<std::collections::HashSet<u64>>; LINK_SHARDS],
+    seen_links: [Mutex<LinkShard>; LINK_SHARDS],
     exts: Mutex<HashMap<String, (u64, u64)>>,
     /// Running totals of the top folders while the walk is under way, for the space map to grow
     /// as the scan goes (see [`ScanCtx::live_tree`]).
@@ -113,6 +113,33 @@ pub struct ScanCtx {
 }
 
 const LINK_SHARDS: usize = 32;
+
+#[derive(Default)]
+struct LinkShard {
+    seen: std::collections::HashSet<u64>,
+    /// Files met again under another name: their size, last change and the names met after the
+    /// first, for [`place_links`].
+    again: HashMap<u64, Again>,
+}
+
+struct Again {
+    len: u64,
+    modified: u64,
+    paths: Vec<PathBuf>,
+}
+
+/// Which of a file's names it is counted under, the smallest first: one outside WinSxS (as DISM
+/// counts the component store), then the full path in alphabetical order, ignoring case. The same
+/// in every scan, normal or fast, whatever order the names are met in.
+pub(crate) fn link_rank(path: &str, winsxs: &str) -> (bool, String) {
+    let lower = path.to_lowercase();
+    (lower.starts_with(winsxs), lower)
+}
+
+/// `c:\windows\winsxs\`, as [`link_rank`] takes it.
+pub(crate) fn winsxs_prefix() -> String {
+    format!("{}\\winsxs\\", display(&system_root()).to_lowercase())
+}
 
 /// How many folder levels below the root get running totals during a scan: as many as the space
 /// map draws at once.
@@ -164,12 +191,32 @@ impl ScanCtx {
         });
     }
 
-    /// Whether this is the first name met of the file with id `id`.
-    fn first_sight(&self, id: u64) -> bool {
-        self.seen_links[(id % LINK_SHARDS as u64) as usize]
+    /// Whether this is the first name met of the file with id `id`; if not, the name (built by
+    /// `path`) is kept for [`place_links`].
+    fn first_sight(
+        &self,
+        id: u64,
+        path: impl FnOnce() -> PathBuf,
+        len: u64,
+        modified: u64,
+    ) -> bool {
+        let mut shard = self.seen_links[(id % LINK_SHARDS as u64) as usize]
             .lock()
-            .unwrap()
-            .insert(id)
+            .unwrap();
+        if shard.seen.insert(id) {
+            return true;
+        }
+        shard
+            .again
+            .entry(id)
+            .or_insert_with(|| Again {
+                len,
+                modified,
+                paths: Vec::new(),
+            })
+            .paths
+            .push(path());
+        false
     }
 
     pub(crate) fn add_exts(&self, exts: HashMap<String, (u64, u64)>) {
@@ -436,7 +483,15 @@ fn scan_dir_at(
     // many names it has, so every id is remembered while walking: some 40 MB for a system drive of
     // a few million files, let go when the walk ends.
     if vol.ntfs {
-        files.retain(|(entry, _)| entry.file_id == 0 || ctx.first_sight(entry.file_id));
+        files.retain(|(entry, len)| {
+            entry.file_id == 0
+                || ctx.first_sight(
+                    entry.file_id,
+                    || path.join(&entry.name),
+                    *len,
+                    entry.modified,
+                )
+        });
     }
     let mut exts: HashMap<String, (u64, u64)> = HashMap::new();
     for (entry, len) in files {
@@ -586,12 +641,172 @@ pub fn run(root: &Path, ctx: &ScanCtx) -> ScanData {
         ntfs: crate::util::is_ntfs(root),
         system_root: system_root(),
     };
-    let tree = scan_dir(root, display(root), ctx, &vol);
+    let mut tree = scan_dir(root, display(root), ctx, &vol);
     // The ids were only needed while walking; on a system drive they are a few million.
+    let mut again = Vec::new();
     for shard in &ctx.seen_links {
-        *shard.lock().unwrap() = Default::default();
+        again.extend(std::mem::take(&mut *shard.lock().unwrap()).again);
+    }
+    if !ctx.cancel.load(Ordering::Relaxed) {
+        place_links(&mut tree, root, ctx, again);
     }
     finish(root, tree, ctx, started)
+}
+
+/// A file with several names was counted under the first the walk met, and which that is depends
+/// on how the threads happened to run: from one scan to the next, hundreds of megabytes would hop
+/// between, say, WeChat's old and new folders. Asks Windows for every name of each such file and
+/// moves it to the one [`link_rank`] picks, so it lands in the same folder every time, and where
+/// the fast scan puts it.
+fn place_links(tree: &mut Node, root: &Path, ctx: &ScanCtx, again: Vec<(u64, Again)>) {
+    if again.is_empty() {
+        return;
+    }
+    *ctx.current.lock().unwrap() = "正在整理硬链接".into();
+    let root_s = display(root);
+    let drive: String = root_s.chars().take(2).collect();
+    let base = root_s.trim_end_matches('\\').to_lowercase();
+    let winsxs = winsxs_prefix();
+    let moves: Vec<(String, String, u64, u64)> = again
+        .into_par_iter()
+        .filter_map(|(_, a)| {
+            let met: Vec<String> = a.paths.iter().map(|p| display(p)).collect();
+            // Every name met after the first in WinSxS (most of System32's twins, as WinSxS is
+            // walked last): the first, outside it, already ranks before them; or it is in WinSxS
+            // too, and the file can only move between WinSxS's own folders. Not worth asking.
+            if met.iter().all(|p| link_rank(p, &winsxs).0) {
+                return None;
+            }
+            let met_lower: std::collections::HashSet<String> =
+                met.iter().map(|p| p.to_lowercase()).collect();
+            let names: Vec<String> = crate::util::link_names(&a.paths[0])
+                .into_iter()
+                .map(|n| format!("{drive}{n}"))
+                .collect();
+            // The name it was counted under: the one the walk met that is not among those met
+            // after. Names under the root the walk could not see (no permission) make it unclear:
+            // it stays where it is.
+            let first: Vec<&String> = names
+                .iter()
+                .filter(|n| {
+                    let l = n.to_lowercase();
+                    l.strip_prefix(&base).is_some_and(|r| r.starts_with('\\'))
+                        && !met_lower.contains(&l)
+                })
+                .collect();
+            let [first] = first[..] else {
+                return None;
+            };
+            let best = met
+                .iter()
+                .min_by_key(|p| link_rank(p, &winsxs))
+                .filter(|b| link_rank(b, &winsxs) < link_rank(first, &winsxs))?;
+            Some((first.clone(), best.clone(), a.len, a.modified))
+        })
+        .collect();
+    if moves.is_empty() {
+        return;
+    }
+    let mut exts = ctx.exts.lock().unwrap();
+    let mut large = ctx.large.lock().unwrap();
+    for (from, to, len, modified) in moves {
+        let (Some(from_rel), Some(to_rel)) = (relative(&root_s, &from), relative(&root_s, &to))
+        else {
+            continue;
+        };
+        let (Some((from_name, from_dirs)), Some((to_name, to_dirs))) =
+            (from_rel.split_last(), to_rel.split_last())
+        else {
+            continue;
+        };
+        shift_file(tree, from_dirs, from_name, len, modified, false);
+        shift_file(tree, to_dirs, to_name, len, modified, true);
+        let e = exts.entry(ext_of(from_name)).or_default();
+        e.0 = e.0.saturating_sub(len);
+        e.1 = e.1.saturating_sub(1);
+        let e = exts.entry(ext_of(to_name)).or_default();
+        e.0 += len;
+        e.1 += 1;
+        if let Some(l) = large.iter_mut().find(|l| l.path == from) {
+            l.path = to.clone();
+            l.name = to_name.to_string();
+        }
+    }
+    sort_children(tree);
+}
+
+/// `path`'s parts below the scan's root, the file's name last.
+fn relative<'a>(root: &str, path: &'a str) -> Option<Vec<&'a str>> {
+    let root = root.trim_end_matches('\\');
+    let rest = path
+        .get(..root.len())?
+        .eq_ignore_ascii_case(root)
+        .then(|| &path[root.len()..])?;
+    let parts: Vec<&str> = rest.split('\\').filter(|p| !p.is_empty()).collect();
+    (!parts.is_empty()).then_some(parts)
+}
+
+/// Takes a file out of the folder at `dirs` below the root (`add` false) or puts it in, with every
+/// folder above it. A folder folded away for being small keeps its bytes in its parent's `small`:
+/// taking out comes from there; putting in brings the folder back.
+fn shift_file(tree: &mut Node, dirs: &[&str], name: &str, len: u64, modified: u64, add: bool) {
+    let kind = kind_of(&ext_of(name)) as usize;
+    let apply = |n: &mut Node| {
+        if add {
+            n.size += len;
+            n.files += 1;
+            n.types[kind] += len;
+            n.newest = n.newest.max(modified);
+        } else {
+            n.size = n.size.saturating_sub(len);
+            n.files = n.files.saturating_sub(1);
+            n.types[kind] = n.types[kind].saturating_sub(len);
+        }
+    };
+    let mut node = tree;
+    apply(node);
+    for part in dirs {
+        let k = match node.children.iter().position(|c| c.name == *part) {
+            Some(k) => k,
+            None if add => {
+                node.children.push(Node {
+                    name: part.to_string(),
+                    ..Default::default()
+                });
+                node.children.len() - 1
+            }
+            None => {
+                node.small = node.small.saturating_sub(len);
+                return;
+            }
+        };
+        node = &mut node.children[k];
+        apply(node);
+    }
+    if add {
+        node.own += len;
+        if len >= TOP_FILE_BYTES {
+            node.top.push(FileItem {
+                name: name.to_string(),
+                size: len,
+                modified,
+                kind: kind as u8,
+            });
+            finish_files(node);
+        }
+    } else {
+        node.own = node.own.saturating_sub(len);
+        node.top.retain(|f| f.name != name);
+    }
+}
+
+/// After files moved: biggest first again, and folders that became small folded, as in the walk.
+fn sort_children(node: &mut Node) {
+    for c in &mut node.children {
+        sort_children(c);
+    }
+    node.children.sort_unstable_by(|a, b| b.size.cmp(&a.size));
+    fold_small(node);
 }
 
 /// Everything after the walk, however the tree was gathered: the large files, the extensions, the
@@ -1499,6 +1714,39 @@ mod tests {
         assert_eq!(tree.children.len(), 1);
         assert_eq!(tree.children[0].top[0].name, "big.iso");
         assert_eq!(tree.children[0].top[0].kind, crate::filetype::DISK);
+    }
+
+    /// A file with two names lands under the same one in every scan, whichever the walk met first:
+    /// the alphabetically first path, with that name's kind and extension.
+    #[test]
+    fn hard_links_land_under_the_same_name() {
+        let dir = tempfile::tempdir().unwrap();
+        if !crate::util::is_ntfs(dir.path()) {
+            return;
+        }
+        std::fs::create_dir_all(dir.path().join("zeta")).unwrap();
+        std::fs::create_dir_all(dir.path().join("alpha")).unwrap();
+        std::fs::write(dir.path().join("zeta/k.bin"), vec![0u8; 5 * MB as usize]).unwrap();
+        std::fs::hard_link(
+            dir.path().join("zeta/k.bin"),
+            dir.path().join("alpha/k.mp4"),
+        )
+        .unwrap();
+        for _ in 0..3 {
+            let data = run(dir.path(), &ScanCtx::default());
+            let tree = &data.tree;
+            assert_eq!(tree.size, 5 * MB);
+            assert_eq!(tree.files, 1);
+            assert_eq!(tree.types[crate::filetype::VIDEO as usize], 5 * MB);
+            assert_eq!(tree.children.len(), 1, "zeta is empty and folded away");
+            assert_eq!(tree.children[0].name, "alpha");
+            assert_eq!(tree.children[0].top[0].name, "k.mp4");
+            assert!(data
+                .exts
+                .iter()
+                .any(|e| e.ext == "mp4" && e.bytes == 5 * MB));
+            assert!(data.exts.iter().all(|e| e.ext != "bin"));
+        }
     }
 
     /// One small file under two names counts once, as one file, wherever it is (WinSxS, cargo's
