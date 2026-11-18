@@ -726,7 +726,9 @@ fn known_data_dirs(name: &str) -> Vec<(&'static str, PathBuf)> {
     let n = name.to_lowercase();
     let home = home();
     let roaming = roaming_appdata();
-    if n.contains("wechat") || n.contains("微信") {
+    // WeChat itself only, by its whole name: 微信输入法 (WeType) also has 微信 in it, and once it
+    // claimed the chat files they were its 30 GB and WeChat's no more.
+    if matches!(compact(name).as_str(), "wechat" | "weixin" | "微信") {
         return vec![
             ("聊天文件", home.join(r"Documents\WeChat Files")),
             ("聊天文件", home.join("xwechat_files")),
@@ -1125,6 +1127,16 @@ pub fn leftovers(entry: &AppEntry) -> Vec<Detail> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_wechat_gets_the_chat_files() {
+        for name in ["WeChat", "微信", "Weixin"] {
+            assert!(!known_data_dirs(name).is_empty(), "{name}");
+        }
+        for name in ["微信输入法", "WeType", "企业微信", "WeChat Work"] {
+            assert!(known_data_dirs(name).is_empty(), "{name}");
+        }
+    }
 
     #[test]
     fn uninstall_commands_split_into_program_and_arguments() {

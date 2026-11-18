@@ -754,6 +754,14 @@ fn with_sizes<T>(f: impl FnOnce(&mut HashMap<String, SizeRecord>) -> T) -> T {
     f(s.get_or_insert_with(|| cache::load(SIZES_CACHE).unwrap_or_default()))
 }
 
+/// Whether two lists name the same data folders, in any order.
+fn same_dirs(a: &[rules::Detail], b: &[rules::Detail]) -> bool {
+    let set = |l: &[rules::Detail]| -> std::collections::HashSet<String> {
+        l.iter().map(|d| d.path.to_lowercase()).collect()
+    };
+    set(a) == set(b)
+}
+
 fn apply_size(info: &mut apps::AppInfo, m: &apps::Measured) {
     info.install_size = m.install_size;
     info.data_size = Some(m.data_size);
@@ -775,6 +783,11 @@ fn adopt_apps(
     with_sizes(|sizes| {
         for e in &mut entries {
             match sizes.get(&e.info.id) {
+                // Remembered with other data folders than it has now (another app took one, or
+                // the rules changed): those sizes are someone else's.
+                Some(r) if !same_dirs(&r.measured.data_dirs, &e.info.data_dirs) => {
+                    stale.push(e.clone())
+                }
                 Some(r) => {
                     apply_size(&mut e.info, &r.measured);
                     if remeasure_old && now.saturating_sub(r.at) > SIZES_FRESH_SECS {
