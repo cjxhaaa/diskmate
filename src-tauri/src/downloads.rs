@@ -7,7 +7,7 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 
 const STALE_DAYS: u64 = 90;
-const STALE_MIN_BYTES: u64 = 100 * 1024 * 1024;
+const STALE_MIN_BYTES: u64 = 10 * 1024 * 1024;
 
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -19,7 +19,7 @@ pub struct DownloadItem {
     pub is_dir: bool,
     /// `installer` | `archive` | `image` | `video` | `document` | `folder` | `other`
     pub kind: &'static str,
-    /// `installed` | `extracted` | `stale` | `other`
+    /// `installed` | `extracted` | `copy` | `stale` | `other`
     pub group: &'static str,
     /// Why it is in its group, in words: "已安装：Android Studio", "已解压到 Fooocus_win64".
     pub reason: Option<String>,
@@ -150,6 +150,50 @@ fn extracted_into(name: &str, folders: &[String]) -> Option<String> {
     folders.iter().find(|f| f.to_lowercase() == stem_l).cloned()
 }
 
+/// `report (2).pdf` → `report.pdf`: the name a browser downloaded the same file under before,
+/// when it numbered this one to keep both.
+fn numbered_from(name: &str) -> Option<String> {
+    let ext = ext_of(name);
+    let stem = if ext.is_empty() {
+        name
+    } else {
+        name.get(..name.len().checked_sub(ext.len() + 1)?)?
+    };
+    let open = stem.strip_suffix(')')?.rfind('(')?;
+    let number = &stem[open + 1..stem.len() - 1];
+    if number.is_empty() || !number.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let base = stem[..open].trim_end_matches([' ', '_', '-']);
+    if base.is_empty() {
+        return None;
+    }
+    Some(if ext.is_empty() {
+        base.to_string()
+    } else {
+        format!("{base}.{ext}")
+    })
+}
+
+/// Whether two files of `len` bytes start and end alike: with the same name and size, enough to
+/// tell a download saved twice from a different file that happens to share both.
+fn same_ends(a: &Path, b: &Path, len: u64) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+    const PART: u64 = 64 * 1024;
+    let read = |p: &Path| -> Option<Vec<u8>> {
+        let mut f = std::fs::File::open(crate::util::long_path(p)).ok()?;
+        let mut out = Vec::new();
+        (&mut f).take(PART).read_to_end(&mut out).ok()?;
+        if len > PART {
+            f.seek(SeekFrom::Start(len.saturating_sub(PART).max(PART)))
+                .ok()?;
+            f.take(PART).read_to_end(&mut out).ok()?;
+        }
+        Some(out)
+    };
+    matches!((read(a), read(b)), (Some(x), Some(y)) if x == y)
+}
+
 pub fn analyze(installed: &[String]) -> Vec<DownloadItem> {
     let dir = downloads_dir();
     let Ok(rd) = std::fs::read_dir(&dir) else {
@@ -185,7 +229,7 @@ pub fn analyze(installed: &[String]) -> Vec<DownloadItem> {
         .collect();
     let stale_before = unix_secs(days_ago(STALE_DAYS));
 
-    let mut items: Vec<DownloadItem> = entries
+    let measured: Vec<(&PathBuf, &String, bool, u64, u64)> = entries
         .par_iter()
         .map(|(path, name, is_dir, modified)| {
             let size = if *is_dir {
@@ -205,17 +249,41 @@ pub fn analyze(installed: &[String]) -> Vec<DownloadItem> {
             } else {
                 *modified
             };
-            let kind = kind_of(name, *is_dir);
-            let (group, reason) = if kind == "installer" {
-                match installed_match(name, installed) {
-                    Some(app) => ("installed", Some(format!("已安装：{app}"))),
-                    None => ("other", None),
-                }
-            } else if kind == "archive" {
-                match extracted_into(name, &folders) {
-                    Some(folder) => ("extracted", Some(format!("已解压到「{folder}」"))),
-                    None => ("other", None),
-                }
+            (path, name, *is_dir, size, modified)
+        })
+        .collect();
+    // Files by name, to find the original a numbered copy was downloaded again from.
+    let files: std::collections::HashMap<String, (&PathBuf, &String, u64)> = measured
+        .iter()
+        .filter(|e| !e.2)
+        .map(|e| (e.1.to_lowercase(), (e.0, e.1, e.3)))
+        .collect();
+
+    let mut items: Vec<DownloadItem> = measured
+        .par_iter()
+        .map(|&(path, name, is_dir, size, modified)| {
+            let kind = kind_of(name, is_dir);
+            let installed_as = (kind == "installer")
+                .then(|| installed_match(name, installed))
+                .flatten();
+            let extracted_to = (kind == "archive")
+                .then(|| extracted_into(name, &folders))
+                .flatten();
+            let copy_of = (!is_dir)
+                .then(|| numbered_from(name))
+                .flatten()
+                .and_then(|o| files.get(&o.to_lowercase()))
+                .filter(|(original, _, len)| *len == size && same_ends(path, original, size))
+                .map(|(_, original, _)| original.to_string());
+            let (group, reason) = if let Some(app) = installed_as {
+                ("installed", Some(format!("已安装：{app}")))
+            } else if let Some(folder) = extracted_to {
+                ("extracted", Some(format!("已解压到「{folder}」")))
+            } else if let Some(original) = copy_of {
+                (
+                    "copy",
+                    Some(format!("和「{original}」是同一个文件，重复下载了")),
+                )
             } else {
                 ("other", None)
             };
@@ -236,7 +304,7 @@ pub fn analyze(installed: &[String]) -> Vec<DownloadItem> {
                 name: name.clone(),
                 size,
                 modified,
-                is_dir: *is_dir,
+                is_dir,
                 kind,
                 group,
                 reason,
@@ -313,6 +381,32 @@ mod tests {
         );
         assert_eq!(extracted_into("other.zip", &folders), None);
     }
+
+    #[test]
+    fn numbered_copies_name_their_original() {
+        assert_eq!(numbered_from("report (2).pdf"), Some("report.pdf".into()));
+        assert_eq!(numbered_from("Setup(1).exe"), Some("Setup.exe".into()));
+        assert_eq!(numbered_from("a_(3).tar.gz"), Some("a.tar.gz".into()));
+        assert_eq!(numbered_from("notes (1)"), Some("notes".into()));
+        assert_eq!(numbered_from("report.pdf"), None);
+        assert_eq!(numbered_from("(1).pdf"), None);
+        assert_eq!(numbered_from("photo (a).jpg"), None);
+    }
+
+    #[test]
+    fn a_numbered_copy_needs_the_same_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = |n: &str| dir.path().join(n);
+        let body: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+        std::fs::write(p("a.bin"), &body).unwrap();
+        std::fs::write(p("b.bin"), &body).unwrap();
+        let mut other = body.clone();
+        *other.last_mut().unwrap() ^= 1;
+        std::fs::write(p("c.bin"), &other).unwrap();
+        let len = body.len() as u64;
+        assert!(same_ends(&p("a.bin"), &p("b.bin"), len));
+        assert!(!same_ends(&p("a.bin"), &p("c.bin"), len));
+    }
 }
 
 #[cfg(test)]
@@ -328,7 +422,7 @@ mod real {
         let started = std::time::Instant::now();
         let items = super::analyze(&installed);
         println!("{} items in {:?}", items.len(), started.elapsed());
-        for g in ["installed", "extracted", "stale", "other"] {
+        for g in ["installed", "extracted", "copy", "stale", "other"] {
             let in_group: Vec<_> = items.iter().filter(|i| i.group == g).collect();
             let total: u64 = in_group.iter().map(|i| i.size).sum();
             println!(

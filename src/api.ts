@@ -220,7 +220,7 @@ export interface ScanDiff {
 }
 
 export type DownloadKind = "installer" | "archive" | "image" | "video" | "document" | "folder" | "other";
-export type DownloadGroup = "installed" | "extracted" | "stale" | "other";
+export type DownloadGroup = "installed" | "extracted" | "copy" | "stale" | "other";
 
 export interface DownloadItem {
   path: string;
@@ -260,6 +260,8 @@ export interface MoveCandidate {
   movedTo: string | null;
   /** False when `size` is not known yet (the quick status check does not measure). */
   measured: boolean;
+  /** When `size` comes from a disk scan: when that scan was taken (Unix seconds). */
+  scannedAt?: number | null;
 }
 
 export interface MoveProgress {

@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { api, type DriveInfo, type MoveCandidate, type MoveProgress, type VDisk } from "../api";
 import { Dialog, DrivePicker } from "../components/ui";
-import { formatBytes } from "../format";
+import { formatBytes, formatWhen } from "../format";
 import { useStore } from "../store";
 
 type Tab = "move" | "moved" | "vdisk";
@@ -109,7 +109,7 @@ function DriveTile({
 }
 
 function MovePanel({ view, onMovedCount }: { view: "move" | "moved"; onMovedCount: (n: number) => void }) {
-  const { drives, toast, refreshDrives } = useStore();
+  const { drives, toast, refreshDrives, startScan, scanning, scanCount } = useStore();
   const system = drives.find((d) => d.isSystem);
   const targets = useMemo(() => drives.filter((d) => !d.isSystem).sort((a, b) => b.free - a.free), [drives]);
   const [drive, setDrive] = useState<string | null>(null);
@@ -158,6 +158,17 @@ function MovePanel({ view, onMovedCount }: { view: "move" | "moved"; onMovedCoun
       .finally(() => setMeasuring(false));
   }, [toast]);
   useEffect(load, [load]);
+  // A scan finished (started here or anywhere else): its folder sizes are the newest.
+  const seenScans = useRef(scanCount);
+  useEffect(() => {
+    if (scanCount === seenScans.current) return;
+    seenScans.current = scanCount;
+    load();
+  }, [scanCount, load]);
+  /** The scan the sizes come from, if they do. */
+  const scanAt = useMemo(() => Math.max(0, ...(list ?? []).map((c) => c.scannedAt ?? 0)), [list]);
+  const homeRoot = system?.root ?? "C:\\";
+  const scanningHome = scanning?.root === homeRoot;
 
   /** Re-checks which programs are running without measuring again. */
   const recheck = async () => {
@@ -392,13 +403,30 @@ function MovePanel({ view, onMovedCount }: { view: "move" | "moved"; onMovedCoun
 
           <div className="move-list-head">
             <span className="muted">
-              {list === null ? "正在读取…" : measuring ? "正在测量各个文件夹的大小，大约需要十几秒…" : `找到 ${pending.length} 个可以搬的文件夹`}
+              {list === null
+                ? "正在读取…"
+                : measuring && !scanAt
+                  ? "正在测量各个文件夹的大小，可能要几分钟…"
+                  : `找到 ${pending.length} 个可以搬的文件夹`}
+              {scanAt > 0 && <span className="faint">　·　大小取自{formatWhen(scanAt)}的扫描</span>}
               <span className="faint">　·　只想挪走几个文件？在「文件整理」里勾选后点「移到其他盘」</span>
             </span>
-            <button className="btn btn-ghost" onClick={load} disabled={measuring}>
-              {measuring ? <span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> : <RefreshCw size={14} />}
-              重新测量
-            </button>
+            {scanAt > 0 ? (
+              <button
+                className="btn btn-ghost"
+                onClick={() => startScan(homeRoot)}
+                disabled={!!scanning}
+                title={scanning && !scanningHome ? "正在扫描其他磁盘，扫完再来" : `重新扫描 ${letter(homeRoot)} 盘，扫完后这里的大小随之更新`}
+              >
+                {scanningHome ? <span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> : <RefreshCw size={14} />}
+                {scanningHome ? "正在扫描…" : "重新扫描"}
+              </button>
+            ) : (
+              <button className="btn btn-ghost" onClick={load} disabled={measuring}>
+                {measuring ? <span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> : <RefreshCw size={14} />}
+                重新测量
+              </button>
+            )}
           </div>
 
           {list === null &&

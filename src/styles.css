@@ -897,6 +897,18 @@ button {
   font-weight: 600;
   color: var(--text-2);
 }
+.group-title.clickable {
+  cursor: pointer;
+}
+/* A group's collapse switch: a labelled button, not a bare chevron, so it is found at a glance. */
+.group-toggle {
+  align-self: center;
+  height: 28px;
+  padding: 0 10px 0 8px;
+  gap: 4px;
+  font-size: 13px;
+  flex: none;
+}
 
 .item {
   border: 1px solid var(--border);
