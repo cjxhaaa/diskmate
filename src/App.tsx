@@ -220,6 +220,7 @@ function Shell() {
             <div className="faint num">共 {formatBytes(drive.total)}</div>
           </div>
         )}
+        <div className="app-version num">DiskMate v{__APP_VERSION__}</div>
       </aside>
       <main className="main">
         {page === "overview" && <Overview onGoClean={() => setPage("cleanup")} />}

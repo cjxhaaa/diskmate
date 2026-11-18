@@ -42,6 +42,8 @@ pub struct Candidate {
     pub moved_to: Option<String>,
     /// False when `size` was not worked out yet (the quick status check skips measuring).
     pub measured: bool,
+    /// When `size` comes from a disk scan: when that scan was taken (Unix seconds).
+    pub scanned_at: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -215,15 +217,29 @@ pub fn candidates(dir: &Path, measure_sizes: bool) -> Vec<Candidate> {
     let known_paths: Vec<PathBuf> = known.iter().map(|k| k.path.clone()).collect();
     let last: std::collections::HashMap<String, u64> =
         crate::cache::load(SIZES_CACHE).unwrap_or_default();
-    let size_of = |p: &Path, rec: Option<&Record>| match rec {
-        Some(r) => (r.size, true),
-        None if measure_sizes => (measure(p, None).bytes, true),
-        None => last.get(&display(p)).map_or((0, false), |&s| (s, true)),
+    // The last scan of the user folder's drive already knows every folder of 50 MB or more:
+    // walking them all again took minutes. A folder it does not list is smaller than that (or
+    // new), and quick to measure.
+    let scan = crate::history::last_folder_sizes(&home());
+    let size_of = |p: &Path, rec: Option<&Record>| -> (u64, bool, Option<u64>) {
+        if let Some(r) = rec {
+            return (r.size, true, None);
+        }
+        if let Some((at, folders)) = &scan {
+            if let Some(&bytes) = folders.get(&display(p).to_lowercase()) {
+                return (bytes, true, Some(*at));
+            }
+        }
+        if measure_sizes {
+            return (measure(p, None).bytes, true, None);
+        }
+        last.get(&display(p))
+            .map_or((0, false, None), |&s| (s, true, None))
     };
     let known: Vec<&Known> = known.iter().filter(|k| k.path.exists()).collect();
     let make_known = |k: &&Known| {
         let rec = moved.iter().find(|r| r.id == k.id);
-        let (size, measured) = size_of(&k.path, rec);
+        let (size, measured, scanned_at) = size_of(&k.path, rec);
         Candidate {
             id: k.id.into(),
             title: k.title.into(),
@@ -235,6 +251,7 @@ pub fn candidates(dir: &Path, measure_sizes: bool) -> Vec<Candidate> {
             blockers: blockers_for(k.blockers, &running),
             moved_to: rec.map(|r| r.target.clone()),
             measured,
+            scanned_at,
         }
     };
     let mut folders = project_folders(&known_paths);
@@ -253,7 +270,7 @@ pub fn candidates(dir: &Path, measure_sizes: bool) -> Vec<Candidate> {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let (size, measured) = size_of(p, rec);
+        let (size, measured, scanned_at) = size_of(p, rec);
         Candidate {
                 id,
                 title: name,
@@ -265,6 +282,7 @@ pub fn candidates(dir: &Path, measure_sizes: bool) -> Vec<Candidate> {
                 blockers: Vec::new(),
                 moved_to: rec.map(|r| r.target.clone()),
                 measured,
+                scanned_at,
             }
     };
     // Measuring runs on the worker pool; the quick status stays on this thread, so it answers at

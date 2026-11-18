@@ -51,7 +51,8 @@ const KIND_TINT: Record<DownloadKind, string> = {
 const GROUPS: { id: DownloadGroup; title: string; hint: string; preselect: boolean }[] = [
   { id: "installed", title: "已经装过的软件安装包", hint: "软件已经装好了，安装包一般用不上了", preselect: true },
   { id: "extracted", title: "已经解压过的压缩包", hint: "旁边就有解压出来的同名文件夹", preselect: true },
-  { id: "stale", title: "很久没动过的大文件", hint: "超过 3 个月没修改、大于 100 MB，请确认后再删", preselect: false },
+  { id: "copy", title: "重复下载的副本", hint: "文件名带 (1)、(2)，和旁边的原件是同一个文件；删掉的只是多出来的副本", preselect: true },
+  { id: "stale", title: "很久没动过的文件", hint: "超过 3 个月没修改、大于 10 MB，请确认后再删", preselect: false },
   { id: "other", title: "其他文件", hint: "按大小排列，自己看着处理", preselect: false },
 ];
 
@@ -67,7 +68,14 @@ function FileIcon({ kind }: { kind: DownloadKind }) {
 function DownloadsPanel() {
   const { downloads, downloadsLoading, loadDownloads, dropDownloads, toast, refreshDrives, drives } = useStore();
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [openOther, setOpenOther] = useState(false);
+  const [closed, setClosed] = useState<Set<DownloadGroup>>(new Set());
+  const flip = (g: DownloadGroup) =>
+    setClosed((s) => {
+      const n = new Set(s);
+      if (n.has(g)) n.delete(g);
+      else n.add(g);
+      return n;
+    });
   const [confirm, setConfirm] = useState(false);
   const [moving, setMoving] = useState(false);
 
@@ -151,7 +159,8 @@ function DownloadsPanel() {
         const all = items.filter((i) => i.group === g.id);
         if (!all.length) return null;
         const isOther = g.id === "other";
-        const rows = isOther && !openOther ? [] : isOther ? all.slice(0, 80) : all;
+        const open = !closed.has(g.id);
+        const rows = !open ? [] : isOther ? all.slice(0, 80) : all;
         const groupBytes = all.reduce((s, i) => s + i.size, 0);
         const allPicked = all.every((i) => selected.has(i.path));
         return (
@@ -171,18 +180,19 @@ function DownloadsPanel() {
                   }
                 />
               )}
-              <span className="group-title">{g.title}</span>
+              <span className="group-title clickable" onClick={() => flip(g.id)}>
+                {g.title}
+              </span>
               <span className="faint" style={{ fontSize: 13 }}>
                 {g.hint}
               </span>
               <span className="group-size num">
                 {all.length} 项 · {formatBytes(groupBytes)}
               </span>
-              {isOther && (
-                <button className="icon-btn" onClick={() => setOpenOther((o) => !o)}>
-                  {openOther ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
-                </button>
-              )}
+              <button className="btn group-toggle" onClick={() => flip(g.id)} aria-expanded={open}>
+                {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+                {open ? "收起" : "展开"}
+              </button>
             </div>
             {rows.length > 0 && (
               <div className="card" style={{ overflow: "hidden" }}>

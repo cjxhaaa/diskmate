@@ -5,7 +5,9 @@ mod crash;
 mod downloads;
 mod dupes;
 mod filemeta;
+mod filetype;
 mod history;
+mod mft;
 mod migrate;
 mod perf;
 mod picker;
@@ -56,6 +58,11 @@ fn data_dir(app: &AppHandle) -> PathBuf {
 
 fn history_dir(app: &AppHandle) -> PathBuf {
     data_dir(app).join("history")
+}
+
+/// The last scan of each drive, tree and all, so the space map is there after a restart.
+fn saved_scans_dir(app: &AppHandle) -> PathBuf {
+    data_dir(app).join("scans")
 }
 
 #[tauri::command]
@@ -190,12 +197,23 @@ fn list_drives() -> Vec<sys::DriveInfo> {
 
 /// Starts scanning `root` in the background. Progress arrives as `scan-progress`, the result as
 /// `scan-done` (the summary); `get_children` / `large_files` then read the stored tree.
+///
+/// `fast` reads the drive's NTFS master file table instead of listing folders (see [`mft`]): a
+/// few seconds instead of minutes, after Windows asks the user for administrator rights. When it
+/// cannot run, `scan-error` says why.
 #[tauri::command]
-fn start_scan(app: AppHandle, state: State<AppState>, root: String) -> Result<(), String> {
+fn start_scan(
+    app: AppHandle,
+    state: State<AppState>,
+    root: String,
+    fast: Option<bool>,
+) -> Result<(), String> {
     let root = PathBuf::from(&root);
     if !root.is_dir() {
         return Err(format!("找不到 {}", root.display()));
     }
+    let fast = fast.unwrap_or(false);
+    let work = saved_scans_dir(&app);
     let ctx = Arc::new(scan::ScanCtx::default());
     if let Some(previous) = state.scanning.lock().unwrap().replace(ctx.clone()) {
         previous.cancel.store(true, Ordering::Relaxed);
@@ -216,7 +234,11 @@ fn start_scan(app: AppHandle, state: State<AppState>, root: String) -> Result<()
         // panic here used to leave the scan card counting nothing forever, with "stop" doing
         // nothing and no way to scan again short of restarting.
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            util::scan_pool().install(|| scan::run(&root, &ctx))
+            if fast {
+                mft::run(&root, &ctx, &work)
+            } else {
+                Ok(util::scan_pool().install(|| scan::run(&root, &ctx)))
+            }
         }));
         done.store(true, Ordering::Relaxed);
         let state = app.state::<AppState>();
@@ -231,24 +253,38 @@ fn start_scan(app: AppHandle, state: State<AppState>, root: String) -> Result<()
         }
         *scanning = None;
         drop(scanning);
+        let result = match result {
+            Ok(Err(message)) => {
+                let _ = app.emit(
+                    "scan-error",
+                    ScanError {
+                        root: root_str,
+                        message,
+                    },
+                );
+                return;
+            }
+            Ok(Ok(data)) => Ok(data),
+            Err(panic) => Err(panic),
+        };
         let finished = result.and_then(|data| {
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let summary = data.summary.clone();
                 let _ = history::save(&history_dir(&app), &data);
-                // History and categories are taken; the browser only needs folders of 1 MB and up.
-                let mut data = data;
-                scan::prune(&mut data.tree);
+                let data = Arc::new(data);
                 state
                     .scans
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
-                    .insert(summary.root.to_uppercase(), Arc::new(data));
-                summary
+                    .insert(summary.root.to_uppercase(), data.clone());
+                (summary, data)
             }))
         });
         match finished {
-            Ok(summary) => {
+            Ok((summary, data)) => {
                 let _ = app.emit("scan-done", summary);
+                // After the UI has it: writing the tree out takes a moment on a big drive.
+                let _ = scan::save(&saved_scans_dir(&app), &data);
             }
             // The panic itself is in crash.log.
             Err(_) => {
@@ -257,6 +293,30 @@ fn start_scan(app: AppHandle, state: State<AppState>, root: String) -> Result<()
         }
     });
     Ok(())
+}
+
+/// The scan of `root` running now, as far as it has got, for the space map to draw while it runs;
+/// `None` when that drive is not being scanned (or a fast scan is reading the table instead).
+#[tauri::command]
+fn scan_live(state: State<AppState>, root: String) -> Option<scan::TreeItem> {
+    let ctx = state.scanning.lock().unwrap().clone()?;
+    let tree = ctx.live_tree(0.0005, 60)?;
+    tree.path
+        .to_uppercase()
+        .starts_with(&root.to_uppercase())
+        .then_some(tree)
+}
+
+#[derive(Serialize, Clone)]
+struct ScanError {
+    root: String,
+    message: String,
+}
+
+/// Whether `root` can be scanned fast (an NTFS drive; see [`mft`]).
+#[tauri::command]
+fn can_fast_scan(root: String) -> bool {
+    util::is_ntfs(&PathBuf::from(root))
 }
 
 #[tauri::command]
@@ -290,10 +350,141 @@ fn scan_summaries(state: State<AppState>) -> Vec<scan::Summary> {
         .collect()
 }
 
+/// The folder at `path` from its drive's last scan, `depth` levels deep; see [`scan::tree`].
 #[tauri::command]
-fn get_children(state: State<AppState>, path: String) -> Result<Vec<scan::NodeView>, String> {
+fn get_tree(
+    state: State<AppState>,
+    path: String,
+    depth: u32,
+    min_share: f64,
+    limit: usize,
+) -> Result<scan::TreeItem, String> {
     let data = scan_for(&state, &path).ok_or("还没有扫描这个磁盘")?;
-    scan::children(&data, &path).ok_or_else(|| format!("扫描结果里没有 {path}"))
+    scan::tree(&data, &path, depth.min(6), min_share, limit.clamp(1, 2000))
+        .ok_or_else(|| format!("扫描结果里没有 {path}"))
+}
+
+/// Makes the last saved scan of `root` the current one, when this session has not scanned it:
+/// the space map then works without scanning again. `None` when nothing was saved.
+#[tauri::command]
+async fn restore_scan(app: AppHandle, root: String) -> Result<Option<scan::Summary>, String> {
+    if let Some(data) = scan_for(&app.state::<AppState>(), &root) {
+        return Ok(Some(data.summary.clone()));
+    }
+    let dir = saved_scans_dir(&app);
+    let wanted = root.clone();
+    let loaded = tauri::async_runtime::spawn_blocking(move || scan::load(&dir, &wanted))
+        .await
+        .map_err(|e| e.to_string())?;
+    let Some(data) = loaded else {
+        return Ok(None);
+    };
+    let state = app.state::<AppState>();
+    let mut scans = state.scans.lock().unwrap();
+    // A scan that finished while this was loading is newer: keep it.
+    let entry = scans
+        .entry(data.summary.root.to_uppercase())
+        .or_insert_with(|| Arc::new(data));
+    Ok(Some(entry.summary.clone()))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PathActions {
+    /// May go to the Recycle Bin, or move to another drive, from the space map.
+    allowed: bool,
+    /// Why not, when not.
+    reason: Option<String>,
+}
+
+/// What the space map may do with `path`: the same rules as the large files page, so system and
+/// program files, and app data, stay where they are.
+#[tauri::command]
+fn path_actions(path: String) -> PathActions {
+    let p = PathBuf::from(&path);
+    if clean::user_path_ok(&p) {
+        return PathActions {
+            allowed: true,
+            reason: None,
+        };
+    }
+    let reason = if !p.exists() {
+        "它已经不在原来的位置了"
+    } else if clean::allowed(&p) {
+        "这是应用自己的数据，直接删除或移走可能让应用出错，请在智能清理或应用管理里处理"
+    } else {
+        "系统和程序的文件不能在这里删除或移走，只能处理你的用户文件夹里的文件"
+    };
+    PathActions {
+        allowed: false,
+        reason: Some(reason.into()),
+    }
+}
+
+/// Takes deleted or moved paths out of the stored scans, so the map stops showing them, and saves
+/// the changed scans.
+#[tauri::command]
+fn forget_paths(app: AppHandle, state: State<AppState>, paths: Vec<String>) {
+    let mut changed = Vec::new();
+    {
+        let mut scans = state.scans.lock().unwrap();
+        for (root, data) in scans.iter_mut() {
+            let mine: Vec<&String> = paths
+                .iter()
+                .filter(|p| p.to_uppercase().starts_with(root.as_str()))
+                .collect();
+            if mine.is_empty() {
+                continue;
+            }
+            let data = Arc::make_mut(data);
+            let mut any = false;
+            for p in mine {
+                any |= scan::forget(data, p);
+            }
+            if any {
+                changed.push(Arc::new(data.clone()));
+            }
+        }
+    }
+    if !changed.is_empty() {
+        let dir = saved_scans_dir(&app);
+        std::thread::spawn(move || {
+            for data in changed {
+                let _ = scan::save(&dir, &data);
+            }
+        });
+    }
+}
+
+/// Folders and files of the last scan of `root` matching `query`; see [`scan::search`].
+#[tauri::command]
+fn search_scan(
+    state: State<AppState>,
+    root: String,
+    query: scan::Query,
+) -> Result<Vec<scan::Hit>, String> {
+    let data = scan_for(&state, &root).ok_or("还没有扫描这个磁盘")?;
+    Ok(scan::search(&data, &query))
+}
+
+/// Folders of `root` in which nothing changed for `days`, at least `min_size` big.
+#[tauri::command]
+fn stale_folders(
+    state: State<AppState>,
+    root: String,
+    days: u64,
+    min_size: u64,
+) -> Result<Vec<scan::Hit>, String> {
+    let data = scan_for(&state, &root).ok_or("还没有扫描这个磁盘")?;
+    let cutoff = data.summary.scanned_at.saturating_sub(days * 86400);
+    Ok(scan::stale(&data, cutoff, min_size))
+}
+
+/// Bytes and files per extension in the last scan of `root`, biggest first.
+#[tauri::command]
+fn ext_stats(state: State<AppState>, root: String) -> Result<Vec<scan::ExtStat>, String> {
+    let data = scan_for(&state, &root).ok_or("还没有扫描这个磁盘")?;
+    Ok(data.exts.clone())
 }
 
 #[tauri::command]
@@ -563,6 +754,14 @@ fn with_sizes<T>(f: impl FnOnce(&mut HashMap<String, SizeRecord>) -> T) -> T {
     f(s.get_or_insert_with(|| cache::load(SIZES_CACHE).unwrap_or_default()))
 }
 
+/// Whether two lists name the same data folders, in any order.
+fn same_dirs(a: &[rules::Detail], b: &[rules::Detail]) -> bool {
+    let set = |l: &[rules::Detail]| -> std::collections::HashSet<String> {
+        l.iter().map(|d| d.path.to_lowercase()).collect()
+    };
+    set(a) == set(b)
+}
+
 fn apply_size(info: &mut apps::AppInfo, m: &apps::Measured) {
     info.install_size = m.install_size;
     info.data_size = Some(m.data_size);
@@ -584,6 +783,11 @@ fn adopt_apps(
     with_sizes(|sizes| {
         for e in &mut entries {
             match sizes.get(&e.info.id) {
+                // Remembered with other data folders than it has now (another app took one, or
+                // the rules changed): those sizes are someone else's.
+                Some(r) if !same_dirs(&r.measured.data_dirs, &e.info.data_dirs) => {
+                    stale.push(e.clone())
+                }
                 Some(r) => {
                     apply_size(&mut e.info, &r.measured);
                     if remeasure_old && now.saturating_sub(r.at) > SIZES_FRESH_SECS {
@@ -1065,6 +1269,13 @@ pub fn run_helper() -> Option<i32> {
     if args.len() == 3 && args[1] == clean::RECYCLE_ARG {
         return Some(clean::recycle_helper(std::path::Path::new(&args[2])));
     }
+    // `diskmate.exe --mft-scan C: <out>`, started elevated by mft::run.
+    if args.len() == 4 && args[1] == mft::MFT_ARG {
+        return Some(mft::helper(
+            &args[2].to_string_lossy(),
+            std::path::Path::new(&args[3]),
+        ));
+    }
     None
 }
 
@@ -1123,6 +1334,7 @@ pub fn run() {
                 });
             }
             cache::init(dir.clone());
+            history::init(history_dir(app.handle()));
             tray::setup(app.handle(), &dir, |app| {
                 let app = app.clone();
                 tauri::async_runtime::spawn(async move {
@@ -1170,9 +1382,17 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_drives,
             start_scan,
+            can_fast_scan,
+            scan_live,
             cancel_scan,
             scan_summaries,
-            get_children,
+            get_tree,
+            restore_scan,
+            path_actions,
+            forget_paths,
+            search_scan,
+            stale_folders,
+            ext_stats,
             large_files,
             analyze_cleanup,
             run_cleanup,

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowRight, CodeXml, Globe, MessageCircle, Monitor, RefreshCw, ScanSearch, Sparkles, Square, TriangleAlert } from "lucide-react";
-import type { CleanItem, ScanProgress, ScanSummary } from "../api";
+import { ArrowRight, CodeXml, Globe, MessageCircle, Monitor, RefreshCw, ScanSearch, Sparkles, Square, TriangleAlert, Zap } from "lucide-react";
+import { api, type CleanItem, type ScanProgress, type ScanSummary } from "../api";
 import { CATEGORIES } from "../categories";
 import { Donut } from "../components/Donut";
 import { AnimatedNumber, DrivePicker, UsageBar } from "../components/ui";
@@ -185,7 +185,12 @@ function scanFraction(p: ScanProgress | null, prevFiles: number | undefined, use
   return f > 0 ? Math.min(f, 0.99) : null;
 }
 
-function Scanning() {
+/**
+ * The running scan: how far, how long, what it is looking at, and a stop button. Shown on the
+ * overview and on the space map, which both draw from the same scan. `note` is a line of the
+ * page's own (the space map says its map is the previous result until this one finishes).
+ */
+export function Scanning({ note }: { note?: string }) {
   const { scanning, cancelScan, scans, drives } = useStore();
   if (!scanning) return null;
   const p = scanning.progress;
@@ -203,9 +208,13 @@ function Scanning() {
         <ScanSearch size={26} />
       </div>
       <div style={{ minWidth: 0 }}>
-        <div style={{ fontWeight: 650, fontSize: 16 }}>正在扫描 {scanning.root}</div>
+        <div style={{ fontWeight: 650, fontSize: 16 }}>
+          {scanning.fast ? "正在快速扫描" : "正在扫描"} {scanning.root}
+        </div>
         <div className="muted num" style={{ margin: "2px 0 6px" }}>
-          已扫描 {formatCount(p?.files ?? 0)} 个文件 · {formatBytes(p?.bytes ?? 0)} · {formatCount(p?.dirs ?? 0)} 个文件夹
+          {scanning.fast && !p?.files
+            ? "等待管理员授权…（请在弹出的窗口里点「是」）"
+            : `已扫描 ${formatCount(p?.files ?? 0)} 个文件 · ${formatBytes(p?.bytes ?? 0)}${scanning.fast ? "" : ` · ${formatCount(p?.dirs ?? 0)} 个文件夹`}`}
         </div>
         <div className="muted num" style={{ fontSize: 12.5, marginBottom: 6 }}>
           已用时 {formatDuration(elapsed)}
@@ -218,6 +227,7 @@ function Scanning() {
           </div>
         )}
         <div className="scan-path">{p?.current || "准备中…"}</div>
+        {note && <div className="scan-note">{note}</div>}
       </div>
       <button className="btn" onClick={cancelScan}>
         <Square size={14} /> 停止
@@ -225,6 +235,8 @@ function Scanning() {
     </div>
   );
 }
+
+const FAST_TIP = "直接读取 NTFS 的主文件表，通常几秒就能扫完整个盘；需要管理员权限，Windows 会先弹窗询问。它还能读到普通扫描没有权限读的文件夹（如 WindowsApps、System Volume Information），所以结果会大一些";
 
 /** "刚刚" / "12 分钟前" / "今天 09:41" / "10-14 16:02". */
 function scannedAgo(unixSecs: number): string {
@@ -239,6 +251,17 @@ function scannedAgo(unixSecs: number): string {
 
 export function Overview({ onGoClean }: { onGoClean: () => void }) {
   const { drives, root, setRoot, current: summary, scanning, startScan } = useStore();
+  const [canFast, setCanFast] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void api
+      .canFastScan(root)
+      .then((v) => alive && setCanFast(v))
+      .catch(() => alive && setCanFast(false));
+    return () => {
+      alive = false;
+    };
+  }, [root]);
   const drive = drives.find((d) => d.root === root);
   const scanningHere = scanning?.root.toUpperCase() === root.toUpperCase();
   const scanningElsewhere = !!scanning && !scanningHere;
@@ -287,6 +310,11 @@ export function Overview({ onGoClean }: { onGoClean: () => void }) {
           >
             <RefreshCw size={15} /> {summary ? "重新扫描" : "扫描"}
           </button>
+          {canFast && (
+            <button className="btn" disabled={!!scanning} title={FAST_TIP} onClick={() => startScan(undefined, true)}>
+              <Zap size={15} /> 快速扫描
+            </button>
+          )}
         </div>
       </div>
 
@@ -328,9 +356,16 @@ export function Overview({ onGoClean }: { onGoClean: () => void }) {
               {scanningElsewhere ? `正在扫描 ${scanning?.root}，完成后才能开始下一个` : "整盘扫描通常需要一到三分钟，机械硬盘会久一些"}
             </div>
           </div>
-          <button className="btn btn-primary btn-lg" disabled={scanningElsewhere} onClick={() => startScan()}>
-            扫描 {driveName}
-          </button>
+          <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+            <button className="btn btn-primary btn-lg" disabled={scanningElsewhere} onClick={() => startScan()}>
+              扫描 {driveName}
+            </button>
+            {canFast && (
+              <button className="btn btn-lg" disabled={scanningElsewhere} title={FAST_TIP} onClick={() => startScan(undefined, true)}>
+                <Zap size={16} /> 快速扫描（需管理员）
+              </button>
+            )}
+          </div>
         </div>
       )}
 

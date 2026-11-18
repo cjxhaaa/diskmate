@@ -18,11 +18,14 @@ export interface Scanning {
   root: string;
   progress: ScanProgress | null;
   startedAt: number;
+  /** Reading the master file table, not listing folders: no folder counts, done in seconds. */
+  fast?: boolean;
 }
 
 /**
- * A scan result. `fromHistory` ones were read back from a previous session: their totals are real,
- * but the folder tree behind them was not kept, so the space map and large files need a new scan.
+ * A scan result. `fromHistory` ones were read back from a previous session's records: their totals
+ * are real, but the folder tree behind them is not loaded. [`Store.restoreSaved`] loads the saved
+ * tree when a page needs it; scans from before trees were saved need scanning again.
  */
 export type ShownSummary = ScanSummary & { fromHistory?: boolean };
 
@@ -52,8 +55,14 @@ interface Store {
   /** The finished scan of the drive on screen. */
   current: ShownSummary | null;
   scanning: Scanning | null;
-  startScan: (root?: string) => void;
+  /** `fast` reads the NTFS master file table: seconds instead of minutes, after a UAC prompt. */
+  startScan: (root?: string, fast?: boolean) => void;
   cancelScan: () => void;
+  /**
+   * Loads the saved tree of `root`'s last scan, for the space map and large files, when only its
+   * totals are on screen. Resolves false when there is none (or only an older one).
+   */
+  restoreSaved: (root: string) => Promise<boolean>;
   /** Bumped whenever a scan of any drive finishes, so the history views know to re-read. */
   scanCount: number;
   analysis: AnalysisState;
@@ -105,6 +114,27 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const analysisStarted = useRef(false);
   const startedOnce = useRef(false);
   const toastId = useRef(0);
+  const scansRef = useRef(scans);
+  scansRef.current = scans;
+  const restoring = useRef<Record<string, Promise<boolean>>>({});
+
+  const restoreSaved = useCallback((r: string) => {
+    const k = key(r);
+    restoring.current[k] ??= api
+      .restoreScan(r)
+      .then((saved) => {
+        const shown = scansRef.current[k];
+        // The saved tree goes with the scan on screen, or a newer one; never an older one.
+        if (!saved || (shown && saved.scannedAt < shown.scannedAt)) return false;
+        setScans((all) => ({ ...all, [k]: saved }));
+        return true;
+      })
+      .catch(() => false)
+      .finally(() => {
+        delete restoring.current[k];
+      });
+    return restoring.current[k];
+  }, []);
 
   const toast = useCallback((text: string) => {
     const id = ++toastId.current;
@@ -119,10 +149,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const startScan = useCallback(
-    (target?: string) => {
+    (target?: string, fast = false) => {
       const r = target ?? root;
-      setScanning({ root: r, progress: null, startedAt: Date.now() });
-      api.startScan(r).catch((e) => {
+      setScanning({ root: r, progress: null, startedAt: Date.now(), fast });
+      api.startScan(r, fast).catch((e) => {
         toast(`扫描失败：${e}`);
         setScanning(null);
       });
@@ -218,6 +248,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setScanning(null);
         toast(`扫描 ${r} 时出错中止了，可以再试一次`);
       }),
+      api.onScanError((e) => {
+        setScanning(null);
+        toast(e.message);
+      }),
       api.onAnalyzeProgress((p) => setAnalysis((a) => (a.status === "loading" ? { ...a, progress: p } : a))),
       api.onAppMeasured((m) =>
         setApps((list) => list?.map((a) => (a.id === m.id ? { ...a, ...m, measured: true } : a)) ?? null),
@@ -275,6 +309,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       scanning,
       startScan,
       cancelScan,
+      restoreSaved,
       scanCount,
       analysis,
       analyze,
@@ -297,7 +332,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       dropDupeFiles,
     }),
     [
-      drives, root, scans, current, scanning, startScan, cancelScan, scanCount, analysis, analyze, cleanup, refreshDrives,
+      drives, root, scans, current, scanning, startScan, cancelScan, restoreSaved, scanCount, analysis, analyze, cleanup, refreshDrives,
       toasts, toast, apps, appsLoading, appIcons, loadApps, dropApp, downloads, downloadsLoading, loadDownloads,
       dropDownloads, dupes, findDupes, cancelDupes, dropDupeFiles,
     ],

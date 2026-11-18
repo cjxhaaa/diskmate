@@ -35,6 +35,30 @@ export function formatDate(unixSecs: number): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+/** When something happened, to the minute: "今天 13:13", "昨天 09:05", "11-17 13:13", "2025-11-17 13:13". */
+export function formatWhen(unixSecs: number, now = new Date()): string {
+  const d = new Date(unixSecs * 1000);
+  const p = (n: number) => String(n).padStart(2, "0");
+  const time = `${p(d.getHours())}:${p(d.getMinutes())}`;
+  const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((day(now) - day(d)) / 86400000);
+  if (days === 0) return `今天 ${time}`;
+  if (days === 1) return `昨天 ${time}`;
+  const date = `${d.getMonth() + 1}-${p(d.getDate())}`;
+  return d.getFullYear() === now.getFullYear() ? `${date} ${time}` : `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${time}`;
+}
+
+/** How long before `now` (both Unix seconds) `unixSecs` was: "3 天前", "5 个月前", "2 年前". */
+export function formatAgo(unixSecs: number, now = Date.now() / 1000): string {
+  if (!unixSecs) return "—";
+  const days = Math.max(0, (now - unixSecs) / 86400);
+  if (days < 1) return "今天";
+  if (days < 30) return `${Math.floor(days)} 天前`;
+  if (days < 365) return `${Math.floor(days / 30)} 个月前`;
+  const years = days / 365;
+  return years < 10 ? `${years.toFixed(1).replace(/\.0$/, "")} 年前` : `${Math.floor(years)} 年前`;
+}
+
 /** 65_000 → "1 分 5 秒"; `rough` drops the seconds past a minute, for estimates. */
 export function formatDuration(ms: number, rough = false): string {
   const s = Math.round(ms / 1000);
