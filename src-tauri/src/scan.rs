@@ -663,14 +663,29 @@ fn place_links(tree: &mut Node, root: &Path, ctx: &ScanCtx, again: Vec<(u64, Aga
         return;
     }
     *ctx.current.lock().unwrap() = "正在整理硬链接".into();
-    let root_s = display(root);
+    // Windows gives a file's names spelled out in full; the root may have been given in short
+    // (8.3) form, as a temporary folder often is: `C:\Users\RUNNER~1\AppData\Local\Temp`.
+    let given = display(root);
+    let root_s = std::fs::canonicalize(root)
+        .map(|p| display(&p))
+        .ok()
+        .filter(|p| p.chars().nth(1) == Some(':'))
+        .unwrap_or_else(|| given.clone());
+    let spelled_out = |p: &str| -> String {
+        match p.get(..given.len()) {
+            Some(head) if head.eq_ignore_ascii_case(&given) => {
+                format!("{root_s}{}", &p[given.len()..])
+            }
+            _ => p.to_string(),
+        }
+    };
     let drive: String = root_s.chars().take(2).collect();
     let base = root_s.trim_end_matches('\\').to_lowercase();
     let winsxs = winsxs_prefix();
     let moves: Vec<(String, String, u64, u64)> = again
         .into_par_iter()
         .filter_map(|(_, a)| {
-            let met: Vec<String> = a.paths.iter().map(|p| display(p)).collect();
+            let met: Vec<String> = a.paths.iter().map(|p| spelled_out(&display(p))).collect();
             // Every name met after the first in WinSxS (most of System32's twins, as WinSxS is
             // walked last): the first, outside it, already ranks before them; or it is in WinSxS
             // too, and the file can only move between WinSxS's own folders. Not worth asking.
@@ -727,7 +742,7 @@ fn place_links(tree: &mut Node, root: &Path, ctx: &ScanCtx, again: Vec<(u64, Aga
         let e = exts.entry(ext_of(to_name)).or_default();
         e.0 += len;
         e.1 += 1;
-        if let Some(l) = large.iter_mut().find(|l| l.path == from) {
+        if let Some(l) = large.iter_mut().find(|l| spelled_out(&l.path) == from) {
             l.path = to.clone();
             l.name = to_name.to_string();
         }
@@ -1732,8 +1747,22 @@ mod tests {
             dir.path().join("alpha/k.mp4"),
         )
         .unwrap();
-        for _ in 0..3 {
-            let data = run(dir.path(), &ScanCtx::default());
+        // The same folder spelled short (`C:\Users\RUNNER~1\...`, as CI's temp folder is), when the
+        // volume makes 8.3 names.
+        let short = {
+            use std::os::windows::ffi::{OsStrExt, OsStringExt};
+            let wide: Vec<u16> = dir.path().as_os_str().encode_wide().chain([0]).collect();
+            let mut buf = vec![0u16; 1024];
+            let n = unsafe {
+                windows::Win32::Storage::FileSystem::GetShortPathNameW(
+                    windows::core::PCWSTR(wide.as_ptr()),
+                    Some(&mut buf),
+                )
+            } as usize;
+            std::path::PathBuf::from(std::ffi::OsString::from_wide(&buf[..n]))
+        };
+        for root in [dir.path(), dir.path(), short.as_path()] {
+            let data = run(root, &ScanCtx::default());
             let tree = &data.tree;
             assert_eq!(tree.size, 5 * MB);
             assert_eq!(tree.files, 1);
