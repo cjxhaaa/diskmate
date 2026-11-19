@@ -49,7 +49,7 @@ jobs:
           $end = [array]::FindIndex([string[]]$lines, $start + 1, [Predicate[string]]{ param($l) $l -like "## *" })
           if ($end -lt 0) { $end = $lines.Count }
           $body = ($lines[($start + 1)..($end - 1)] -join "`n").Trim()
-          $body += "`n`n### 下载`n`n- **安装版**：DiskMate_${v}_x64-setup.exe（推荐）`n- **便携版**：DiskMate_${v}_x64_portable.zip，解压即用`n- **Scoop**：``scoop update diskmate```n- DiskMate_${v}_x64_symbols.zip 是调试符号，只用来分析崩溃文件，不需要下载。"
+          $body += "`n`n### 下载`n`n- **安装版**：DiskMate_${v}_x64-setup.exe（推荐）`n- **便携版**：DiskMate_${v}_x64_portable.zip，解压即用`n- **Scoop**：``scoop update diskmate```n- 安装包暂未签名，Windows SmartScreen 可能提示「已保护你的电脑」，点「更多信息 → 仍要运行」即可。`n- DiskMate_${v}_x64_symbols.zip 是调试符号，只用来分析崩溃文件，不需要下载。"
           "body<<NOTES_EOF`n$body`nNOTES_EOF" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       # In-app updates are signed: the installed app only accepts an update whose signature matches
